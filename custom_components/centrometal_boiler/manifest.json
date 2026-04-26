@@ -1,18 +1,18 @@
 {
   "domain": "centrometal_boiler",
   "name": "Centrometal Boiler System",
-  "version": "0.1.0.0",
-  "iot_class": "cloud_push",
-  "integration_type": "hub",
-  "config_flow": true,
-  "documentation": "https://github.com/Internetrevizor/hass-centrometal-boiler",
-  "issue_tracker": "https://github.com/Internetrevizor/hass-centrometal-boiler/issues",
-  "dependencies": [],
   "codeowners": [
     "@Internetrevizor"
   ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/Internetrevizor/hass-centrometal-boiler",
+  "integration_type": "hub",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/Internetrevizor/hass-centrometal-boiler/issues",
   "requirements": [
     "lxml>=4.9.0",
     "websockets>=13.1"
-  ]
+  ],
+  "version": "0.1.0.0"
 }
