@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, CONF_PREFIX, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 
 from .centrometal_web_boiler import (
@@ -29,6 +30,7 @@ def _redact_account(account: str) -> str:
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
 CentrometalConfigEntry = ConfigEntry[CentrometalRuntimeData]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -110,7 +112,7 @@ class WebBoilerSystem:
             device["serial"],
             param["name"],
             param["value"],
-            self.web_boiler_client.username,
+            self._log_account,
         )
 
     def _annotate_devices(self) -> None:
@@ -147,7 +149,7 @@ class WebBoilerSystem:
             _LOGGER.info(
                 "WebBoilerSystem initial refresh got login page after successful login; "
                 "attempting one fresh HTTP relogin %s",
-                self.web_boiler_client.username,
+                self._log_account,
             )
             try:
                 await self.web_boiler_client.http_client.reinitialize_session()
@@ -162,7 +164,7 @@ class WebBoilerSystem:
                 _LOGGER.warning(
                     "WebBoilerSystem initial refresh got login page again right after successful "
                     "relogin — treating as transient startup issue %s",
-                    self.web_boiler_client.username,
+                    self._log_account,
                 )
                 refresh_ok = False
             except HttpClientConnectionError as err:
@@ -204,13 +206,13 @@ class WebBoilerSystem:
             if websocket_running:
                 _LOGGER.debug(
                     "Centrometal websocket disconnected but reconnect loop is active (%s)",
-                    self.web_boiler_client.username,
+                    self._log_account,
                 )
                 return
             if now - self.last_relogin_timestamp > WEB_BOILER_LOGIN_RETRY_INTERVAL:
                 _LOGGER.info(
                     "Centrometal WebBoilerSystem::tick websocket task stopped; trying relogin %s",
-                    self.web_boiler_client.username,
+                    self._log_account,
                 )
                 await self.relogin()
             return
@@ -224,7 +226,7 @@ class WebBoilerSystem:
                 _LOGGER.info(
                     "WebBoilerSystem::tick HTTP session expired during refresh, "
                     "attempting silent relogin %s",
-                    self.web_boiler_client.username,
+                    self._log_account,
                 )
                 await self._silent_http_relogin()
                 return
@@ -245,7 +247,7 @@ class WebBoilerSystem:
         except HttpClientAuthError:
             _LOGGER.warning(
                 "WebBoilerSystem silent HTTP relogin failed: credentials rejected %s",
-                self.web_boiler_client.username,
+                self._log_account,
             )
             self._entry.async_start_reauth(self._hass)
             return
@@ -253,13 +255,13 @@ class WebBoilerSystem:
             _LOGGER.warning(
                 "WebBoilerSystem silent HTTP relogin failed: connection error %s (%s)",
                 err,
-                self.web_boiler_client.username,
+                self._log_account,
             )
             return
 
         _LOGGER.info(
             "WebBoilerSystem silent HTTP relogin succeeded %s",
-            self.web_boiler_client.username,
+            self._log_account,
         )
         # Retry the refresh now that we have a fresh session
         try:
@@ -271,7 +273,7 @@ class WebBoilerSystem:
             _LOGGER.warning(
                 "WebBoilerSystem refresh got login page again right after successful "
                 "relogin — treating as transient server issue, not invalid credentials %s",
-                self.web_boiler_client.username,
+                self._log_account,
             )
             return
         except HttpClientConnectionError:
@@ -307,7 +309,7 @@ class WebBoilerSystem:
                 _LOGGER.warning(
                     "WebBoilerSystem refresh got login page right after successful "
                     "relogin — treating as transient, not triggering reauth %s",
-                    self.web_boiler_client.username,
+                    self._log_account,
                 )
                 ok = False
             except HttpClientConnectionError:
