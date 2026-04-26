@@ -1,12 +1,6 @@
 {
   "name": "Centrometal Boiler System",
   "content_in_root": false,
-  "render_readme": true,
-  "domains": [
-    "sensor",
-    "switch",
-    "binary_sensor"
-  ],
   "homeassistant": "2024.11.0",
   "country": [
     "HR",
