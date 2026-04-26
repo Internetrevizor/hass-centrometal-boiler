@@ -155,7 +155,7 @@ class WebBoilerGenericSensor(SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.web_boiler_client.is_websocket_connected()
+        return self.web_boiler_client.has_fresh_data()
 
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:

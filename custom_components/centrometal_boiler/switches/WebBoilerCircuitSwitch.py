@@ -64,16 +64,60 @@ class WebBoilerCircuitSwitch(SwitchEntity):
     def unique_id(self) -> str:
         return self._unique_id
 
-    @property
-    def is_on(self) -> bool:
+    @staticmethod
+    def _coerce_number(value):
         try:
-            return int(self._param_state["value"]) == int(self._param_on["value"])
-        except (ValueError, KeyError, TypeError):
+            return float(str(value).strip().replace(",", "."))
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    @staticmethod
+    def _coerce_bool(value):
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("1", "on", "true", "yes", "active", "enabled"):
+            return True
+        if text in ("0", "off", "false", "no", "inactive", "disabled"):
             return False
+        return None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return circuit state from the live PVAL value.
+
+        Some Centrometal circuit rows, especially DHW, do not report the live
+        ON state as exactly PMAX. The command API still uses 1/0, while the
+        parameter table may expose PMAX as a limit/option value instead of the
+        current ON value. Treat anything different from PMIN/OFF as ON, and
+        keep PMAX as a fallback for devices that do not expose PMIN.
+        """
+        try:
+            state_raw = self._param_state["value"]
+        except KeyError:
+            return None
+
+        state_bool = self._coerce_bool(state_raw)
+        if state_bool is not None:
+            return state_bool
+
+        state_num = self._coerce_number(state_raw)
+        if state_num is None:
+            return None
+
+        off_num = self._coerce_number(self._param_off.get("value"))
+        if off_num is not None:
+            return state_num != off_num
+
+        on_num = self._coerce_number(self._param_on.get("value"))
+        if on_num is not None:
+            return state_num == on_num
+
+        return state_num != 0
 
     @property
     def available(self) -> bool:
-        return self.web_boiler_client.is_websocket_connected()
+        return self.web_boiler_client.has_fresh_data()
 
     def _compute_last_updated_str(self) -> str:
         tzinfo = dt_util.get_time_zone(self.hass.config.time_zone)
@@ -89,7 +133,17 @@ class WebBoilerCircuitSwitch(SwitchEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"Last updated": self._compute_last_updated_str()}
+        # Diagnostics: surface the raw triplet that drives is_on so users
+        # who report "HA shows Off but WebUI shows On" bugs can paste the
+        # values directly into an issue.
+        attrs: dict[str, Any] = {"Last updated": self._compute_last_updated_str()}
+        try:
+            attrs["PVAL"] = self._param_state.get("value")
+            attrs["PMIN"] = self._param_off.get("value") if self._param_off else None
+            attrs["PMAX"] = self._param_on.get("value") if self._param_on else None
+        except Exception:
+            pass
+        return attrs
 
     async def turn_circuit_on_off(self, value: bool):
         ok = await self.web_boiler_client.turn_circuit(self._device["serial"], self._dbindex, value)

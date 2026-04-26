@@ -9,20 +9,27 @@ from homeassistant.exceptions import HomeAssistantError
 from ..common import create_device_info, format_name
 
 
-def _value_is_on(v: Any) -> bool:
-    if v in (1, "1", "ON", "On", "on", True, "TRUE", "True", "true"):
+def _value_is_on(v: Any) -> bool | None:
+    """Decide ON/OFF from a parameter value, or None when unknown.
+
+    Returns None for unrecognised values so callers can fall back to a
+    secondary parameter rather than silently reporting the switch as ON
+    (which is what the previous ``return str(v) != "OFF"`` did, and which
+    caused HA to flip switches the wrong way for some devices).
+    """
+    if v in (1, "1", "1.0", "ON", "On", "on", True, "TRUE", "True", "true"):
         return True
-    if v in (0, "0", "OFF", "Off", "off", False, "FALSE", "False", "false"):
+    if v in (0, "0", "0.0", "OFF", "Off", "off", False, "FALSE", "False", "false"):
         return False
     try:
-        intval = int(str(v))
+        intval = int(float(str(v).strip()))
         if intval == 1:
             return True
         if intval == 0:
             return False
     except (ValueError, TypeError):
         pass
-    return str(v) != "OFF"
+    return None
 
 
 class WebBoilerPowerSwitch(SwitchEntity):
@@ -78,14 +85,14 @@ class WebBoilerPowerSwitch(SwitchEntity):
         except Exception:
             return None
 
-    def _current_state_on(self) -> bool:
+    def _current_state_on(self) -> bool | None:
         try:
-            return self._param_state["value"] != "OFF"
+            return _value_is_on(self._param_state["value"])
         except Exception:
-            return False
+            return None
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         cmd_val = self._current_cmd_on()
         if cmd_val is not None:
             return cmd_val
@@ -93,7 +100,7 @@ class WebBoilerPowerSwitch(SwitchEntity):
 
     @property
     def available(self) -> bool:
-        return self.web_boiler_client.is_websocket_connected()
+        return self.web_boiler_client.has_fresh_data()
 
     def _compute_last_updated_str(self) -> str:
         tzinfo = dt_util.get_time_zone(self.hass.config.time_zone)
