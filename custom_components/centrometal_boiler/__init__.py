@@ -203,15 +203,29 @@ class WebBoilerSystem:
         websocket_running = self.web_boiler_client.is_websocket_running()
 
         if not connected:
-            if websocket_running:
+            disconnected_for = self.web_boiler_client.websocket_disconnected_for()
+            # Tolerance: keep using the existing reconnect loop for up to 3x
+            # the relogin retry interval. While we wait, keep refreshing
+            # state via HTTP so HA entities don't go stale.
+            if websocket_running and disconnected_for < (WEB_BOILER_LOGIN_RETRY_INTERVAL * 3):
                 _LOGGER.debug(
-                    "Centrometal websocket disconnected but reconnect loop is active (%s)",
+                    "Centrometal websocket disconnected for %.0fs but reconnect loop is active (%s)",
+                    disconnected_for,
                     self._log_account,
                 )
+                if now - self.last_refresh_timestamp > WEB_BOILER_REFRESH_INTERVAL:
+                    self.last_refresh_timestamp = now
+                    try:
+                        await self.web_boiler_client.refresh()
+                    except HttpClientAuthError:
+                        await self._silent_http_relogin()
+                    except HttpClientConnectionError:
+                        pass
                 return
             if now - self.last_relogin_timestamp > WEB_BOILER_LOGIN_RETRY_INTERVAL:
                 _LOGGER.info(
-                    "Centrometal WebBoilerSystem::tick websocket task stopped; trying relogin %s",
+                    "Centrometal WebBoilerSystem::tick websocket unavailable for %.0fs; trying relogin %s",
+                    disconnected_for,
                     self._log_account,
                 )
                 await self.relogin()

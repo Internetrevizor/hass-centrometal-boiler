@@ -5,7 +5,7 @@
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 
-A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box or the integrated new WiFi Module.
+A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box.
 
 The integration connects Home Assistant to the Centrometal Web Boiler service and exposes supported boilers as sensors, binary sensors, and switches for monitoring, dashboards, and automations.
 
@@ -25,7 +25,7 @@ The integration connects Home Assistant to the Centrometal Web Boiler service an
 
 Known compatible device families include:
 
-- PelTec and PelTec II Lambda
+- PelTec and PelTec-lambda
 - CentroPlus with CM Pelet-set
 - BioTec-L
 - BioTec-Plus
@@ -37,7 +37,7 @@ Other Centrometal devices connected through the CM WiFi-Box may also work.
 ## Requirements
 
 - Home Assistant `2024.11.0` or newer
-- A Centrometal boiler connected through a CM WiFi-Box or the integrated WiFi Module.
+- A Centrometal boiler connected through a CM WiFi-Box
 - A working Centrometal Web Boiler account
 - The boiler visible in the Centrometal web or mobile application
 
@@ -94,6 +94,24 @@ logger:
 ```
 
 Disable debug logging after troubleshooting.
+
+## TLS / certificate handling
+
+The Centrometal web-boiler endpoint may present an incomplete certificate chain
+on some Home Assistant installations. The integration uses `auto` TLS mode by
+default: it tries normal certificate verification first, then retries that
+Centrometal request without verification only if Python reports a certificate
+verification failure.
+
+Optional environment override:
+
+```bash
+CENTROMETAL_VERIFY_SSL=0  # default: skip certificate verification
+CENTROMETAL_VERIFY_SSL=1  # strict: certificate errors fail setup
+CENTROMETAL_VERIFY_SSL=auto  # try verified TLS first, fallback on certificate errors
+```
+
+Leave the variable unset for the recommended compatibility mode.
 
 ## Development
 

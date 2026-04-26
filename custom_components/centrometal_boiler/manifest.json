@@ -11,8 +11,7 @@
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/Internetrevizor/hass-centrometal-boiler/issues",
   "requirements": [
-    "lxml>=4.9.0",
     "websockets>=13.1"
   ],
-  "version": "0.1.0.0"
+  "version": "0.1.0.1"
 }

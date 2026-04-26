@@ -10,6 +10,7 @@ from websockets.exceptions import ConnectionClosed
 
 from . import stomp
 from .logging_utils import redact_account
+from .HttpClient import TLS_VERIFY_ENV, _tls_verify_mode
 from .const import (
     WEB_BOILER_STOMP_DEVICE_TOPIC,
     WEB_BOILER_STOMP_LOGIN_PASSCODE,
@@ -36,20 +37,47 @@ class WebBoilerWsClient:
         self._connected_event = asyncio.Event()
         self._heartbeat_task: Optional[asyncio.Task] = None
 
-    async def _create_ssl_context(self):
+    async def _create_ssl_context(self, *, unverified: bool = False):
         loop = asyncio.get_running_loop()
+        mode = _tls_verify_mode()
+        if mode == "off" or unverified:
+            return await loop.run_in_executor(None, ssl._create_unverified_context)
         return await loop.run_in_executor(None, ssl.create_default_context)
 
     async def _heartbeat_loop(self, ws) -> None:
+        # We wait on the stop event with a 30-second timeout instead of
+        # ``asyncio.sleep(30)`` so that shutdown interrupts the loop
+        # immediately rather than after the next tick.
         while not self._stop_event.is_set():
-            await asyncio.sleep(30)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=30)
+                # Stop event triggered — exit cleanly.
+                return
+            except asyncio.TimeoutError:
+                pass
             try:
                 await ws.send("\n")
+            except asyncio.CancelledError:
+                raise
             except Exception:
+                # Heartbeat failure means the websocket is gone; the main
+                # ``async for ws in connect(...)`` loop will reconnect. We
+                # log at DEBUG with traceback so the cause isn't silently
+                # lost (the previous ``except Exception: return`` swallowed
+                # everything).
+                self.logger.debug(
+                    "WebBoilerWsClient heartbeat send failed (%s)",
+                    self.log_account,
+                    exc_info=True,
+                )
                 return
 
     async def _handle_connection(self, ws):
         self._ws = ws
+        # New websocket -> new STOMP session -> subscription IDs start fresh.
+        # Without this reset they grew unbounded across reconnects within a
+        # single ``start()`` call.
+        self.subscription_index = 0
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
         try:
             await ws.send(
@@ -103,53 +131,63 @@ class WebBoilerWsClient:
             self._connected_event.clear()
 
     async def _run(self):
-        ssl_ctx = await self._create_ssl_context()
-        try:
-            async for ws in connect(
-                WEB_BOILER_STOMP_URL,
-                ssl=ssl_ctx,
-                ping_interval=20,
-                ping_timeout=20,
-                close_timeout=10,
-            ):
-                if self._stop_event.is_set():
-                    break
-                close_code = None
-                close_reason = None
-                try:
-                    await self._handle_connection(ws)
-                except ConnectionClosed as exc:
-                    close_code = getattr(exc, "code", None)
-                    close_reason = getattr(exc, "reason", None)
-                    self.logger.warning(
-                        "WebBoilerWsClient connection closed %s %s (%s)",
-                        close_code,
-                        close_reason,
-                        self.log_account,
+        use_unverified_ssl = False
+        while not self._stop_event.is_set():
+            ssl_ctx = await self._create_ssl_context(unverified=use_unverified_ssl)
+            try:
+                async for ws in connect(
+                    WEB_BOILER_STOMP_URL,
+                    ssl=ssl_ctx,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    close_timeout=10,
+                ):
+                    if self._stop_event.is_set():
+                        break
+                    close_code = None
+                    close_reason = None
+                    try:
+                        await self._handle_connection(ws)
+                    except ConnectionClosed as exc:
+                        close_code = getattr(exc, "code", None)
+                        close_reason = getattr(exc, "reason", None)
+                        self.logger.warning(
+                            "WebBoilerWsClient connection closed %s %s (%s)",
+                            close_code,
+                            close_reason,
+                            self.log_account,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as err:
+                        self.logger.exception("WebBoilerWsClient error (%s)", self.log_account)
+                        await self.error_callback(ws, err)
+                    finally:
+                        if close_code is None:
+                            close_code = getattr(ws, "close_code", None)
+                        if close_reason is None:
+                            close_reason = getattr(ws, "close_reason", None)
+                        await self.disconnected_callback(ws, close_code, close_reason)
+                break
+            except asyncio.CancelledError:
+                raise
+            except ssl.SSLError as err:
+                if _tls_verify_mode() == "auto" and not use_unverified_ssl:
+                    self.logger.debug(
+                        "TLS certificate verification failed for websocket %s; retrying without verification because %s=auto. Error: %s",
+                        WEB_BOILER_STOMP_URL,
+                        TLS_VERIFY_ENV,
+                        err,
                     )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as err:
-                    self.logger.exception("WebBoilerWsClient error (%s)", self.log_account)
-                    await self.error_callback(ws, err)
-                finally:
-                    if close_code is None:
-                        close_code = getattr(ws, "close_code", None)
-                    if close_reason is None:
-                        close_reason = getattr(ws, "close_reason", None)
-                    if close_code is None and self._stop_event.is_set():
-                        close_reason = close_reason or "client_stop_requested"
-                    await self.disconnected_callback(ws, close_code, close_reason)
-                if self._stop_event.is_set():
-                    break
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            self.logger.exception("WebBoilerWsClient fatal error (%s)", self.log_account)
-            await self.error_callback(None, err)
-
-    def is_running(self) -> bool:
-        return self._task is not None and not self._task.done()
+                    use_unverified_ssl = True
+                    continue
+                self.logger.exception("WebBoilerWsClient connect loop failed (%s)", self.log_account)
+                await self.error_callback(None, err)
+                break
+            except Exception as err:
+                self.logger.exception("WebBoilerWsClient connect loop failed (%s)", self.log_account)
+                await self.error_callback(None, err)
+                break
 
     async def start(self, username: str) -> None:
         self.username = username
