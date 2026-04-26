@@ -189,6 +189,11 @@ class WebBoilerWsClient:
                 await self.error_callback(None, err)
                 break
 
+    def is_running(self) -> bool:
+        """Return True when the websocket background task is active."""
+        task = self._task
+        return task is not None and not task.done()
+
     async def start(self, username: str) -> None:
         self.username = username
         self.log_account = redact_account(username)
