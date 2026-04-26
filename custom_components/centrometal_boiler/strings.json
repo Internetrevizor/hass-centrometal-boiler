@@ -1,23 +1,42 @@
 {
   "config": {
     "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured_account%]"
+      "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
+      "reauth_successful": "Re-authentication was successful",
+      "wrong_account": "The provided account does not match the existing configuration entry"
     },
     "error": {
-      "cannot_connect": "Failed to connect, please try again.",
+      "cannot_connect": "Failed to connect. Check the credentials and try again.",
       "invalid_auth": "Invalid authentication.",
-      "too_many_requests": "Too many requests, retry later.",
+      "too_many_requests": "Too many requests. Try again later.",
       "unknown": "Unexpected error."
     },
     "step": {
       "user": {
-        "description": "Please enter your credentials.",
+        "description": "Enter the credentials for your Centrometal Web Boiler account.",
         "data": {
           "email": "[%key:common::config_flow::data::email%]",
           "password": "[%key:common::config_flow::data::password%]",
-          "prefix": "[%key:common::config_flow::data::prefix%]",
-          "product_prefix": "[%key:common::config_flow::data::product_prefix%]"
+          "prefix": "Entity name prefix"
+        },
+        "data_description": {
+          "prefix": "Optional. Use this when one Home Assistant instance contains multiple boilers."
         }
+      },
+      "reauth_confirm": {
+        "description": "Update the credentials for your Centrometal Web Boiler account.",
+        "data": {
+          "email": "[%key:common::config_flow::data::email%]",
+          "password": "[%key:common::config_flow::data::password%]",
+          "prefix": "Entity name prefix"
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "websocket_status": {
+        "name": "Cloud connection"
       }
     }
   }

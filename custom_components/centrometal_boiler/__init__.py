@@ -1,190 +1,319 @@
-"""Support for Centrometa Boiler devices."""
+from __future__ import annotations
 
-import logging
 import datetime
+import hashlib
+import logging
 import time
 
-from centrometal_web_boiler import WebBoilerClient
-
 from homeassistant.config_entries import ConfigEntry
-
-from homeassistant.const import (
-    CONF_EMAIL,
-    CONF_PASSWORD,
-    CONF_PREFIX,
-    EVENT_HOMEASSISTANT_STOP,
-)
-
+from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, CONF_PREFIX, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.event import async_call_later
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers.event import async_track_time_interval
 
-from .const import (
-    DOMAIN,
-    WEB_BOILER_CLIENT,
-    WEB_BOILER_SYSTEM,
-    WEB_BOILER_LOGIN_RETRY_INTERVAL,
-    WEB_BOILER_REFRESH_INTERVAL,
+from .centrometal_web_boiler import (
+    HttpClientAuthError,
+    HttpClientConnectionError,
+    WebBoilerClient,
 )
+from .const import DOMAIN, WEB_BOILER_LOGIN_RETRY_INTERVAL, WEB_BOILER_REFRESH_INTERVAL
+from .runtime import CentrometalRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "switch", "binary_sensor"]
 
-# pylint: disable=missing-function-docstring
-# pylint: disable=broad-except
+def _redact_account(account: str) -> str:
+    """Return a stable non-reversible account identifier for logs."""
+    digest = hashlib.sha256(account.encode()).hexdigest()[:8]
+    return f"account-{digest}"
+
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
+CentrometalConfigEntry = ConfigEntry[CentrometalRuntimeData]
 
 
-async def async_setup(hass: HomeAssistant, config: dict):
-    """Set up the Centrometal Boiler System integration."""
-
-    if DOMAIN not in hass.data:
-        hass.data[DOMAIN] = {}
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    _LOGGER.debug("Setting up Centrometal Boiler System component")
-
-    prefix = entry.data[CONF_PREFIX] if (CONF_PREFIX in entry.data) else ""
-    product_prefix = entry.data['product_prefix'] if ('product_prefix' in entry.data) else True
-    web_boiler_system = WebBoilerSystem(
-        hass,
+async def async_setup_entry(hass: HomeAssistant, entry: CentrometalConfigEntry) -> bool:
+    prefix = entry.data.get(CONF_PREFIX, "") or ""
+    system = WebBoilerSystem(
+        hass=hass,
+        entry=entry,
         username=entry.data[CONF_EMAIL],
         password=entry.data[CONF_PASSWORD],
         prefix=prefix,
-        product_prefix=product_prefix,
     )
+    stop_listener = None
+    try:
+        try:
+            await system.start()
+        except ConfigEntryAuthFailed:
+            raise
+        except Exception as err:
+            raise ConfigEntryNotReady(
+                f"Cannot connect to Centrometal web-boiler server: {err}"
+            ) from err
 
-    unique_id = entry.data[CONF_EMAIL]
-    hass.data[DOMAIN][unique_id] = {}
-    hass.data[DOMAIN][unique_id][WEB_BOILER_SYSTEM] = web_boiler_system
+        runtime = CentrometalRuntimeData(client=system.web_boiler_client, system=system)
+        entry.runtime_data = runtime
+        stop_listener = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, system.stop)
+        runtime.stop_listener = stop_listener
 
-    if not await web_boiler_system.start():
-        _LOGGER.error(
-            "Got Access Denied Error when setting up Centrometal Boiler System: %s",
-            entry.data[CONF_EMAIL],
-        )
+        system.start_tick()
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        return True
+    except Exception:
+        system.cancel_tick()
+        if stop_listener is not None:
+            stop_listener()
+        try:
+            await system.stop()
+        except Exception as err:
+            _LOGGER.debug("Centrometal setup cleanup failed: %s", err)
+        raise
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, web_boiler_system.stop())
 
-    async def schedule_tick() -> None:
-        async_call_later(hass, 1.0, fire_time_event)
-
-    async def fire_time_event(target: float) -> None:
-        await web_boiler_system.tick()
-        await schedule_tick()
-
-    await schedule_tick()
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    _LOGGER.debug(
-        "Centrometal Boiler System component setup finished "
-        + web_boiler_system.username
-    )
+async def async_unload_entry(hass: HomeAssistant, entry: CentrometalConfigEntry) -> bool:
+    runtime = entry.runtime_data
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        return False
+    runtime.system.cancel_tick()
+    if runtime.stop_listener is not None:
+        runtime.stop_listener()
+        runtime.stop_listener = None
+    await runtime.system.stop()
     return True
 
 
 class WebBoilerSystem:
-    """A Centrometal Boiler System class."""
-
-    def __init__(self, hass, *, username, password, prefix, product_prefix):
-        """Initialize the Centrometal Boiler System."""
+    def __init__(self, hass: HomeAssistant, *, entry: CentrometalConfigEntry, username: str, password: str, prefix: str) -> None:
         self._hass = hass
+        self._entry = entry
         self.username = username
         self.password = password
-        self.prefix = prefix.rstrip()
-        if len(self.prefix) > 0:
-            self.prefix = self.prefix + " "
-        self.product_prefix = product_prefix
-        self.web_boiler_client = WebBoilerClient()
-        self.last_relogin_timestamp = datetime.datetime.timestamp(
-            datetime.datetime.now()
-        )
-        self.last_refresh_timestamp = datetime.datetime.timestamp(
-            datetime.datetime.now()
-        )
+        self._log_account = _redact_account(username)
+        prefix = prefix.rstrip()
+        self.prefix = (prefix + " ") if prefix else ""
+        self.web_boiler_client = WebBoilerClient(hass)
+        now_ts = time.monotonic()
+        self.last_relogin_timestamp = now_ts
+        self.last_refresh_timestamp = now_ts
+        self._tick_unsub = None
 
-    async def on_parameter_updated(self, device, param, create=False):
+    async def on_parameter_updated(self, device, param, create: bool = False):
         action = "Create" if create else "update"
-        serial = device["serial"]
-        name = param["name"]
-        value = param["value"]
-        _LOGGER.info(
+        _LOGGER.debug(
             "%s %s %s = %s (%s)",
             action,
-            serial,
-            name,
-            value,
+            device["serial"],
+            param["name"],
+            param["value"],
             self.web_boiler_client.username,
         )
-        pass
 
-    async def start(self):
-        _LOGGER.debug(f"Starting Centrometal Boiler System {self.username}")
-        self._hass.data[DOMAIN][self.username][WEB_BOILER_CLIENT] = (
-            self.web_boiler_client
-        )
+    def _annotate_devices(self) -> None:
+        devices = list(self.web_boiler_client.data.values())
+        multi = len(devices) > 1
+        for device in devices:
+            device["__client"] = self.web_boiler_client
+            device["__system"] = self
+            device["__prefix"] = self.prefix
+            device["__multi_device"] = multi
 
+    async def start(self) -> None:
+        _LOGGER.debug("Starting Centrometal Boiler System %s", self._log_account)
         try:
-            loggedIn = await self.web_boiler_client.login(self.username, self.password)
-            if not loggedIn:
-                raise Exception(
-                    f"Cannot login to Centrometal web boiler server {self.username}"
-                )
-            gotConfiguration = await self.web_boiler_client.get_configuration()
-            if not gotConfiguration:
-                raise Exception(
-                    f"Cannot get configuration from Centrometal server {self.username}"
-                )
-            if len(self.web_boiler_client.data) == 0:
-                raise Exception(
-                    f"No device found to Centrometal web boiler server {self.username}"
-                )
-            await self.web_boiler_client.start_websocket(self.on_parameter_updated)
-            await self.web_boiler_client.refresh()
-            return True
-        except Exception as ex:
-            _LOGGER.error("Authentication failed : %s", str(ex))
-            return False
+            logged_in = await self.web_boiler_client.login(self.username, self.password)
+        except HttpClientAuthError as err:
+            raise ConfigEntryAuthFailed("Invalid Centrometal credentials") from err
+        except HttpClientConnectionError as err:
+            raise ConfigEntryNotReady(str(err)) from err
 
-    async def stop(self):
-        _LOGGER.debug(
-            f"Stopping Centrometal WebBoilerSystem {self.web_boiler_client.username}"
+        if not logged_in:
+            raise ConfigEntryNotReady("Cannot login to Centrometal server")
+
+        got_configuration = await self.web_boiler_client.get_configuration()
+        if not got_configuration:
+            raise ConfigEntryNotReady("Cannot get configuration from Centrometal server")
+        if len(self.web_boiler_client.data) == 0:
+            raise ConfigEntryNotReady("No device found on Centrometal boiler server")
+        self._annotate_devices()
+        await self.web_boiler_client.start_websocket(self.on_parameter_updated)
+        try:
+            refresh_ok = await self.web_boiler_client.refresh()
+        except HttpClientAuthError:
+            _LOGGER.info(
+                "WebBoilerSystem initial refresh got login page after successful login; "
+                "attempting one fresh HTTP relogin %s",
+                self.web_boiler_client.username,
+            )
+            try:
+                await self.web_boiler_client.http_client.reinitialize_session()
+                await self.web_boiler_client.http_client.login()
+            except HttpClientAuthError as err:
+                raise ConfigEntryAuthFailed("Invalid Centrometal credentials") from err
+            except HttpClientConnectionError as err:
+                raise ConfigEntryNotReady(str(err)) from err
+            try:
+                refresh_ok = await self.web_boiler_client.refresh()
+            except HttpClientAuthError:
+                _LOGGER.warning(
+                    "WebBoilerSystem initial refresh got login page again right after successful "
+                    "relogin — treating as transient startup issue %s",
+                    self.web_boiler_client.username,
+                )
+                refresh_ok = False
+            except HttpClientConnectionError as err:
+                raise ConfigEntryNotReady(str(err)) from err
+        except HttpClientConnectionError as err:
+            raise ConfigEntryNotReady(str(err)) from err
+        if not refresh_ok:
+            raise ConfigEntryNotReady("Initial refresh failed")
+        self.last_refresh_timestamp = time.monotonic()
+
+    def start_tick(self) -> None:
+        self.cancel_tick()
+
+        async def _on_interval(_now) -> None:
+            try:
+                await self.tick()
+            except Exception as ex:
+                _LOGGER.warning("WebBoilerSystem.tick raised: %s", ex)
+
+        self._tick_unsub = async_track_time_interval(
+            self._hass, _on_interval, datetime.timedelta(seconds=60)
         )
-        return await self.web_boiler_client.close_websocket()
+
+    def cancel_tick(self) -> None:
+        if self._tick_unsub:
+            self._tick_unsub()
+            self._tick_unsub = None
+
+    async def stop(self, event=None):
+        _LOGGER.debug("Stopping Centrometal WebBoilerSystem %s", self._log_account)
+        await self.web_boiler_client.close()
 
     async def tick(self):
-        datenow = datetime.datetime.now()
-        timestamp = datetime.datetime.timestamp(datenow)
-        if not self.web_boiler_client.is_websocket_connected():
-            if (
-                timestamp - self.last_relogin_timestamp
-                > WEB_BOILER_LOGIN_RETRY_INTERVAL
-            ):
+        now = time.monotonic()
+        connected = self.web_boiler_client.is_websocket_connected()
+        websocket_running = self.web_boiler_client.is_websocket_running()
+
+        if not connected:
+            if websocket_running:
+                _LOGGER.debug(
+                    "Centrometal websocket disconnected but reconnect loop is active (%s)",
+                    self.web_boiler_client.username,
+                )
+                return
+            if now - self.last_relogin_timestamp > WEB_BOILER_LOGIN_RETRY_INTERVAL:
                 _LOGGER.info(
-                    f"Centrometal WebBoilerSystem::tick trying to relogin {self.web_boiler_client.username}"
+                    "Centrometal WebBoilerSystem::tick websocket task stopped; trying relogin %s",
+                    self.web_boiler_client.username,
                 )
                 await self.relogin()
-        else:
-            if timestamp - self.last_refresh_timestamp > WEB_BOILER_REFRESH_INTERVAL:
-                self.last_refresh_timestamp = timestamp
-                _LOGGER.info(
-                    f"WebBoilerSystem::tick refresh data {self.web_boiler_client.username}"
-                )
+            return
+
+        if now - self.last_refresh_timestamp > WEB_BOILER_REFRESH_INTERVAL:
+            self.last_refresh_timestamp = now
+            _LOGGER.info("WebBoilerSystem::tick refresh data %s", self._log_account)
+            try:
                 refresh_successful = await self.web_boiler_client.refresh()
-                if not refresh_successful:
-                    await self.relogin()
+            except HttpClientAuthError:
+                _LOGGER.info(
+                    "WebBoilerSystem::tick HTTP session expired during refresh, "
+                    "attempting silent relogin %s",
+                    self.web_boiler_client.username,
+                )
+                await self._silent_http_relogin()
+                return
+            except HttpClientConnectionError:
+                refresh_successful = False
+            if not refresh_successful:
+                await self.relogin()
+
+    async def _silent_http_relogin(self):
+        """Re-establish the HTTP session silently after session/cookie expiration.
+
+        Only triggers a full reauth flow if the credentials themselves are rejected.
+        The websocket connection is left untouched since it operates independently.
+        """
+        try:
+            await self.web_boiler_client.http_client.reinitialize_session()
+            await self.web_boiler_client.http_client.login()
+        except HttpClientAuthError:
+            _LOGGER.warning(
+                "WebBoilerSystem silent HTTP relogin failed: credentials rejected %s",
+                self.web_boiler_client.username,
+            )
+            self._entry.async_start_reauth(self._hass)
+            return
+        except HttpClientConnectionError as err:
+            _LOGGER.warning(
+                "WebBoilerSystem silent HTTP relogin failed: connection error %s (%s)",
+                err,
+                self.web_boiler_client.username,
+            )
+            return
+
+        _LOGGER.info(
+            "WebBoilerSystem silent HTTP relogin succeeded %s",
+            self.web_boiler_client.username,
+        )
+        # Retry the refresh now that we have a fresh session
+        try:
+            ok = await self.web_boiler_client.refresh()
+        except HttpClientAuthError:
+            # Login just succeeded seconds ago, so credentials are valid.
+            # The server returned the login page again for some other reason
+            # (session race, load balancer, rate limit). Do NOT trigger reauth.
+            _LOGGER.warning(
+                "WebBoilerSystem refresh got login page again right after successful "
+                "relogin — treating as transient server issue, not invalid credentials %s",
+                self.web_boiler_client.username,
+            )
+            return
+        except HttpClientConnectionError:
+            ok = False
+        if ok:
+            self.last_refresh_timestamp = time.monotonic()
 
     async def relogin(self):
-        self.last_relogin_timestamp = time.time()
-        await self.web_boiler_client.close_websocket()
-        await self.web_boiler_client.http_client.close_session()
-        relogin_successful = await self.web_boiler_client.relogin()
+        self.last_relogin_timestamp = time.monotonic()
+        try:
+            await self.web_boiler_client.close_websocket()
+        except Exception:
+            pass
+
+        try:
+            relogin_successful = await self.web_boiler_client.relogin()
+        except HttpClientAuthError:
+            _LOGGER.warning("WebBoilerSystem relogin failed due to invalid credentials %s", self._log_account)
+            self._entry.async_start_reauth(self._hass)
+            return
+        except HttpClientConnectionError as err:
+            _LOGGER.warning("WebBoilerSystem relogin failed due to connection error %s (%s)", err, self._log_account)
+            return
+
         if relogin_successful:
+            self._annotate_devices()
             await self.web_boiler_client.start_websocket(self.on_parameter_updated)
-            await self.web_boiler_client.refresh()
-        else:
-            _LOGGER.warning(
-                f"WebBoilerSystem::tick failed to relogin {self.web_boiler_client.username}"
-            )
+            try:
+                ok = await self.web_boiler_client.refresh()
+            except HttpClientAuthError:
+                # Relogin just succeeded, so credentials are valid.
+                # Treat this as a transient server-side issue.
+                _LOGGER.warning(
+                    "WebBoilerSystem refresh got login page right after successful "
+                    "relogin — treating as transient, not triggering reauth %s",
+                    self.web_boiler_client.username,
+                )
+                ok = False
+            except HttpClientConnectionError:
+                ok = False
+            if ok:
+                self.last_refresh_timestamp = time.monotonic()
+            return
+
+        _LOGGER.warning("WebBoilerSystem::tick failed to relogin %s", self._log_account)
