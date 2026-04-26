@@ -120,7 +120,6 @@ Include the Home Assistant version, integration version, boiler model, and relev
 ## Disclaimer
 
 This integration is an independent community project and is not affiliated with, endorsed by, or supported by Centrometal d.o.o.
-This project is maintained as a fork/rework of the original `9a4gl/hass-centrometal-boiler` integration, with thanks to the original author and contributors.
 
 ## License
 
