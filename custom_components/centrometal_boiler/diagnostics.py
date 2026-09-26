@@ -7,7 +7,20 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 
-TO_REDACT = {CONF_EMAIL, CONF_PASSWORD, "country", "address", "place", "city", "serial", "id", "label"}
+from .centrometal_web_boiler.parameter_filters import is_session_parameter
+
+TO_REDACT = {
+    CONF_EMAIL,
+    CONF_PASSWORD,
+    "country",
+    "countryCode",
+    "address",
+    "place",
+    "city",
+    "serial",
+    "id",
+    "label",
+}
 
 
 def _hash_identifier(value: str) -> str:
@@ -29,9 +42,20 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry) -> dict
                 "timestamp": param.get("timestamp"),
             }
             for name, param in device.get("parameters", {}).items()
+            # Belt and braces: these are filtered on ingestion, but a
+            # diagnostics file is what gets attached to public issue reports,
+            # so a session token must not reach it by any path.
+            if not is_session_parameter(name)
         }
     return {
         "entry": async_redact_data(dict(entry.data), TO_REDACT),
         "websocket_connected": runtime.client.is_websocket_connected(),
+        # Answers "why is everything unavailable?" without needing a debug log:
+        # a connected socket that has delivered nothing looks identical to a
+        # healthy one from the outside.
+        "websocket_running": runtime.client.is_websocket_running(),
+        "websocket_message_age_seconds": runtime.client.websocket_message_age(),
+        "websocket_disconnected_for_seconds": runtime.client.websocket_disconnected_for(),
+        "has_fresh_data": runtime.client.has_fresh_data(),
         "devices": async_redact_data(devices, TO_REDACT),
     }

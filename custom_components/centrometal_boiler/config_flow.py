@@ -23,6 +23,21 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+try:
+    from homeassistant.util.ssl import get_default_context as _ha_ssl_context_factory
+except ImportError:  # pragma: no cover - depends on the running core version
+    _ha_ssl_context_factory = None
+
+
+def normalize_account(email: str) -> str:
+    """Return the config-entry unique id for an account.
+
+    Mail addresses are matched case-insensitively by the portal, so
+    "User@Example.com" and "user@example.com" are one account and must not be
+    able to produce two config entries.
+    """
+    return email.strip().lower()
+
 
 class CentrometalBoilerConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -82,12 +97,12 @@ class CentrometalBoilerConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAI
                 prefix_default=user_input.get(CONF_PREFIX, ""),
             )
 
-        unique_id = user_input[CONF_EMAIL]
-        await self.async_set_unique_id(unique_id)
+        await self.async_set_unique_id(normalize_account(user_input[CONF_EMAIL]))
         self._abort_if_unique_id_configured()
 
-        device = list(device_collection.values())[0]
-        title = device["product"] + ": " + device["address"] + ", " + device["place"]
+        device = next(iter(device_collection.values()))
+        location = ", ".join(part for part in (device.get("address"), device.get("place")) if part)
+        title = f"{device['product']}: {location}" if location else device["product"]
         return self.async_create_entry(
             title=title,
             data={
@@ -157,7 +172,13 @@ class CentrometalBoilerConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAI
                 errors={"base": "cannot_connect"},
             )
 
-        await self.async_set_unique_id(user_input[CONF_EMAIL])
+        # Entries created before unique ids were normalized still carry the
+        # address exactly as it was typed. Keep that id when it refers to the
+        # same account, or reauthenticating such an entry would abort as
+        # "wrong_account" against its own credentials.
+        normalized = normalize_account(user_input[CONF_EMAIL])
+        existing = entry.unique_id or ""
+        await self.async_set_unique_id(existing if existing.lower() == normalized else normalized)
         self._abort_if_unique_id_mismatch(reason="wrong_account")
         return self.async_update_reload_and_abort(
             entry,
@@ -229,7 +250,7 @@ class InvalidAuth(Exception):
 
 async def try_connection(email, password):
     _LOGGER.debug("Trying to connect to Centrometal boiler server during setup")
-    web_boiler_client = WebBoilerClient(None)
+    web_boiler_client = WebBoilerClient(None, ssl_context_factory=_ha_ssl_context_factory)
     try:
         await web_boiler_client.login(username=email, password=password)
         got_configuration = await web_boiler_client.get_configuration()

@@ -1,4 +1,3 @@
-from typing import List
 
 from homeassistant.core import HomeAssistant
 from homeassistant.components.sensor import SensorEntity
@@ -31,8 +30,8 @@ class WebBoilerBinaryOnOffSensor(WebBoilerGenericSensor):
         return base
 
 
-def create_binary_state_entities(hass: HomeAssistant, device) -> List[SensorEntity]:
-    entities: List[SensorEntity] = []
+def create_binary_state_entities(hass: HomeAssistant, device) -> list[SensorEntity]:
+    entities: list[SensorEntity] = []
 
     binary_map = {
         "B_Ppwm": [None, "mdi:pump", None, "PWM Pump"],

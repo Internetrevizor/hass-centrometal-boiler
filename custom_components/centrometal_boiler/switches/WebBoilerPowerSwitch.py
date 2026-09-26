@@ -1,12 +1,11 @@
-import datetime
 from typing import Any
 
-import homeassistant.util.dt as dt_util
 from homeassistant.core import HomeAssistant
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.exceptions import HomeAssistantError
 
-from ..common import create_device_info, format_name
+from ..centrometal_web_boiler import HttpClientAuthError
+from ..common import create_device_info, format_name, format_time
 
 
 def _value_is_on(v: Any) -> bool | None:
@@ -99,21 +98,21 @@ class WebBoilerPowerSwitch(SwitchEntity):
         return self._current_state_on()
 
     @property
+    def icon(self) -> str:
+        # Reflects the command, not the flame: this is the boiler's on/off
+        # request, and "Flame State" is the entity that reports burning.
+        return "mdi:fire" if self.is_on else "mdi:fire-off"
+
+    @property
     def available(self) -> bool:
         return self.web_boiler_client.has_fresh_data()
 
     def _compute_last_updated_str(self) -> str:
-        tzinfo = dt_util.get_time_zone(self.hass.config.time_zone)
         for param in (self._param_cmd, self._param_state):
             if not param:
                 continue
             try:
-                raw_ts = param.get("timestamp") if hasattr(param, "get") else param["timestamp"]
-                return (
-                    datetime.datetime.fromtimestamp(int(raw_ts), tz=datetime.timezone.utc)
-                    .astimezone(tzinfo)
-                    .strftime("%d.%m.%Y %H:%M:%S")
-                )
+                return format_time(self.hass, int(param["timestamp"]))
             except Exception:
                 continue
         return "?"
@@ -132,14 +131,33 @@ class WebBoilerPowerSwitch(SwitchEntity):
         return attrs
 
     async def _async_turn_and_refresh(self, power_on: bool) -> None:
-        if not await self.web_boiler_client.turn(self._device["serial"], power_on):
+        # WebBoilerClient re-raises HttpClientAuthError on purpose. Left
+        # uncaught it reaches the frontend as an opaque "Unknown error" and the
+        # expired session is never rebuilt; here it turns into a clear message
+        # plus a silent relogin, so the next press works.
+        try:
+            accepted = await self.web_boiler_client.turn(self._device["serial"], power_on)
+        except HttpClientAuthError as err:
+            await self.web_boiler_system.async_recover_http_session()
+            raise HomeAssistantError(
+                "The Centrometal session had expired, so the boiler command was not sent. Please try again."
+            ) from err
+        if not accepted:
             raise HomeAssistantError("Failed to send the boiler power command")
-        refreshed = await self.web_boiler_client.refresh()
+        try:
+            refreshed = await self.web_boiler_client.refresh()
+        except HttpClientAuthError as err:
+            await self.web_boiler_system.async_recover_http_session()
+            raise HomeAssistantError(
+                "The boiler command was sent, but the Centrometal session expired before the state "
+                "could be refreshed"
+            ) from err
         if not refreshed:
             raise HomeAssistantError(
                 "The boiler command was sent, but the integration could not refresh the latest state"
             )
-        await self.web_boiler_client.data.notify_all_updated()
+        # No notify_all_updated() here: refresh() already fires the per-parameter
+        # callbacks, so this only wrote every entity's state a second time.
 
     async def async_turn_on(self, **kwargs) -> None:
         await self._async_turn_and_refresh(True)

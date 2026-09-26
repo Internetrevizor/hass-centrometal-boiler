@@ -94,9 +94,15 @@ PELTEC2_PORTAL_SENSORS = {
     "B_razina": [None, "mdi:basket-fill", None, "Fuel Level State"],
     "B_SUP_TYPE": [None, "mdi:lan-connect", None, "Internet Access"],
     "B_specG": [None, "mdi:alpha-s-circle", None, "Status Mark"],
-    "B_start": [None, "mdi:play-pause", None, "Start / Stop Transition"],
+    "B_start": [None, "mdi:fire-circle", None, "Burner Command"],
     "B_FotV": ["kΩ", "mdi:fire-alert", None, "Photocell Resistance"],
-    "B_fan": ["rpm", "mdi:fan", None, "Fan Speed"],
+    # B_fan ("Fan Speed", rpm) is deliberately absent. The controller shows
+    # fan rpm on its own screen, but it does not publish the field to the
+    # portal on this firmware: across a 8.5-hour capture on v3.03dL, B_fan,
+    # B_fanB, B_fanO and B_rpm appeared in none of the status responses and
+    # in no websocket frame. The entity therefore sat at a frozen 0 rpm,
+    # which reads as a working sensor reporting a real zero. B_fan01
+    # ("Boiler Fan") is reported reliably and covers the fan.
     "B_misP": [PERCENTAGE, "mdi:pipe-valve", None, "4-Way Mixing Valve Position"],
     "B_puz": [None, "mdi:transfer-up", None, "Feeder Screw"],
     "B_tur": [None, "mdi:fan-chevron-up", None, "Turbulator Cleaner"],
@@ -104,6 +110,19 @@ PELTEC2_PORTAL_SENSORS = {
     "B_bup": [None, "mdi:heat-wave", None, "Buffer Tank Heat Request"],
     "B_REC": [None, "mdi:autorenew", None, "DHW Recirculation Enabled"],
     "B_REO": [None, "mdi:pump", None, "DHW Recirculation Pump"],
+    # "Dozirni ventil" in the controller manual. Observed switching on at
+    # state S2, the moment the ignition dose is fed.
+    "B_doz": [None, "mdi:fuel", None, "Pellet Feed"],
+    # "Sigurnosni presostat" -- the safety pressure switch that forces OFF
+    # and raises E12 when a boiler door is opened. Read 1 throughout normal
+    # operation, so 1 is the healthy state.
+    "B_pres": [None, "mdi:gauge", None, "Safety Pressure Switch"],
+    # Portal settings slot 582. Unlike the other PVAL_* slots the portal
+    # returns no parameter-list row for it, so it has no label, no
+    # Default/Minimum/Maximum and never became an entity. Owner-confirmed
+    # meaning: the number of hours of inactivity after which the pump is
+    # run for a few seconds to stop it seizing.
+    "PVAL_582_0": [UnitOfTime.HOURS, "mdi:pump-off", None, "Pump Anti-Blocking Interval"],
 }
 
 

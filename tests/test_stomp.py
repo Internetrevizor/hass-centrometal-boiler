@@ -83,3 +83,24 @@ def test_subscribe_frame_format() -> None:
     assert "id:sub-7" in frame
     assert "destination:/topic/x" in frame
     assert "ack:auto" in frame
+
+
+def test_unterminated_data_does_not_grow_the_buffer_without_bound() -> None:
+    """A stream that never sends a frame terminator must not be buffered forever.
+
+    Without a cap the remainder grows for the whole life of the connection,
+    which turns a misbehaving broker into a memory leak in Home Assistant.
+    """
+    oversized = "x" * (stomp.MAX_FRAME_BUFFER_CHARS + 10)
+    frames, remainder = stomp.extract_complete_frames(oversized, "")
+    assert frames == []
+    assert remainder == ""
+
+
+def test_buffering_still_works_below_the_cap() -> None:
+    first, remainder = stomp.extract_complete_frames("MESSAGE\nsubscription:sub-1\n", "")
+    assert first == []
+    frames, remainder = stomp.extract_complete_frames('destination:/topic/cm.inst.peltec.SN1\n\n{"B_TI":1}\x00', remainder)
+    assert remainder == ""
+    assert len(frames) == 1
+    assert frames[0]["headers"]["destination"] == "/topic/cm.inst.peltec.SN1"

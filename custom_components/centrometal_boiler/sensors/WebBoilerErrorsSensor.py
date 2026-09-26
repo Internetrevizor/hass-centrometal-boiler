@@ -8,6 +8,14 @@ from homeassistant.core import HomeAssistant
 from .WebBoilerGenericSensor import WebBoilerGenericSensor
 
 
+# Every refresh rewrites this entity's state (the "Last updated" attribute
+# changes each time), and the recorder stores the whole attribute payload with
+# it. Fifty event dictionaries every few minutes is a lot of database for data
+# that is one click away in the portal, so the attribute keeps a short tail and
+# the full list stays available through diagnostics.
+MAX_EVENTS_IN_ATTRIBUTES = 10
+
+
 class WebBoilerErrorsSensor(WebBoilerGenericSensor):
     """Decoded event/error history from the portal's errors-list endpoint."""
 
@@ -17,7 +25,7 @@ class WebBoilerErrorsSensor(WebBoilerGenericSensor):
         attrs = dict(base)
         events = self.device.get("errors") or []
         attrs["Event count"] = len(events)
-        attrs["Events"] = events[-50:]
+        attrs["Events"] = events[-MAX_EVENTS_IN_ATTRIBUTES:]
         if events:
             attrs["Latest event"] = events[-1]
         return attrs

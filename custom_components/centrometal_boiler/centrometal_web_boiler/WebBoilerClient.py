@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
-from .HttpClient import HttpClient, HttpClientAuthError, HttpClientConnectionError
+from .HttpClient import HttpClient, HttpClientAuthError, HttpClientConnectionError, SSLContextFactory
 from .HttpHelper import HttpHelper
 from .WebBoilerDeviceCollection import WebBoilerDeviceCollection
 from .WebBoilerWsClient import WebBoilerWsClient
@@ -53,10 +54,14 @@ def _response_is_success(response: Any) -> bool:
 
 
 class WebBoilerClient:
-    def __init__(self, hass=None):
+    def __init__(self, hass=None, *, ssl_context_factory: SSLContextFactory | None = None):
         self.hass = hass
         self.logger = logging.getLogger(__name__)
         self.websocket_connected = False
+        self._ssl_context_factory = ssl_context_factory
+        # Default window for has_fresh_data(); the Home Assistant layer
+        # raises it to match a longer configured refresh interval.
+        self.freshness_window = 300.0
         self.connectivity_callbacks: dict[str, Callable[[bool], Awaitable[None]]] = {}
         self.ws_client = WebBoilerWsClient(
             hass,
@@ -64,6 +69,7 @@ class WebBoilerClient:
             self.ws_disconnected_callback,
             self.ws_error_callback,
             self.ws_data_callback,
+            ssl_context_factory=ssl_context_factory,
         )
         self.on_parameter_updated_callback = None
         self.log_account = "account-unknown"
@@ -79,7 +85,7 @@ class WebBoilerClient:
         self.username = username
         self.log_account = redact_account(username)
         self.password = password
-        self.http_client = HttpClient(self.username, self.password)
+        self.http_client = HttpClient(self.username, self.password, ssl_context_factory=self._ssl_context_factory)
         self.http_helper = HttpHelper(self.http_client)
         self.data = WebBoilerDeviceCollection(username)
         return await self.http_client.login()
@@ -98,6 +104,7 @@ class WebBoilerClient:
         await asyncio.gather(*tasks)
         await self.data.parse_installation_statuses(self.http_client.installation_status_all)
         self.data.parse_parameter_lists(self.http_client.parameter_list)
+        self._warn_on_missing_settings_metadata()
 
         # Event history is useful metadata, not a prerequisite for loading
         # the boiler. Older accounts/firmware may reject this endpoint, so a
@@ -120,6 +127,22 @@ class WebBoilerClient:
         self.last_successful_http_refresh = now
         self.last_metadata_refresh = now
         return True
+
+    def _warn_on_missing_settings_metadata(self) -> None:
+        """Log when a device came back with no editable-setting rows.
+
+        The portal answers parameter-list with a varying set of groups and a
+        short answer is not an HTTP error, so without this the only symptom is
+        a device page that quietly lost its settings sensors.
+        """
+        for serial, device in self.data.items():
+            if not device.get("temperatures"):
+                self.logger.warning(
+                    "Centrometal parameter-list returned no editable settings for device %s; "
+                    "its setting sensors will be missing until the next metadata refresh (%s)",
+                    serial,
+                    self.log_account,
+                )
 
     async def close_websocket(self) -> bool:
         try:
@@ -155,6 +178,14 @@ class WebBoilerClient:
         cache is refreshed from HTTP regardless of websocket health, and the
         on-update callbacks fire so HA entities re-render.
         """
+        # Parameters the snapshot repeats unchanged are not notified, so a
+        # refresh can legitimately write no entity state at all. That is fine
+        # while entities are available, but if they had gone unavailable it
+        # would leave them showing unavailable with nothing left to wake them:
+        # availability is time-based, and nothing would write it. So when the
+        # integration was stale going in, every entity is notified once the
+        # refresh succeeds.
+        was_stale = not self.has_fresh_data()
         try:
             ids = self.http_helper.get_all_devices_ids()
             for id_ in ids:
@@ -202,6 +233,13 @@ class WebBoilerClient:
                 await parameter.notify_updated()
 
             self.last_successful_http_refresh = now
+            if was_stale:
+                self.logger.info(
+                    "Centrometal HTTP refresh recovered from a stale period; "
+                    "re-rendering every entity (%s)",
+                    self.log_account,
+                )
+                await self.data.notify_all_updated()
             return True
         except HttpClientAuthError:
             raise
@@ -272,18 +310,45 @@ class WebBoilerClient:
             return 0.0
         return time.monotonic() - self.disconnected_since
 
-    def has_fresh_data(self, max_age: float = 300.0) -> bool:
+    def websocket_message_age(self) -> float | None:
+        """Seconds since the last websocket *data* frame, or None if never."""
+        if self.last_websocket_message is None:
+            return None
+        return time.monotonic() - self.last_websocket_message
+
+    def websocket_is_stale(self, max_age: float = 300.0) -> bool:
+        """True when the socket is up but has delivered nothing for max_age.
+
+        STOMP heartbeats are not counted (they are filtered out before the
+        data callback), so this is real traffic. A socket can stay open and
+        answer pings while the broker has quietly stopped forwarding the
+        installation topic; without this check that "connected" flag alone
+        kept every entity available, showing hours-old values as current.
+        """
+        age = self.websocket_message_age()
+        if age is None:
+            # Nothing observed yet on a connection that has not been up long
+            # enough to say anything — do not call that stale.
+            return False
+        return age > max_age
+
+    def has_fresh_data(self, max_age: float | None = None) -> bool:
         """Availability signal for entities.
 
         Per HA guidance (integration-quality-scale: entity-unavailable):
         an entity should report unavailable when we cannot fetch data, not
         keep showing the last-known value indefinitely. We treat the entity
-        as available when *either* the websocket is currently connected
-        *or* an HTTP refresh has succeeded recently — so transient WS gaps
-        do not cause UI flapping while a stale-for-hours integration *does*
+        as available when *either* the websocket is currently connected and
+        still delivering *or* an HTTP refresh has succeeded recently — so
+        transient WS gaps do not cause UI flapping (the HTTP refresh runs
+        well inside this window) while a stale-for-hours integration *does*
         eventually go unavailable.
         """
-        return self.websocket_connected or self.has_recent_http_refresh(max_age)
+        if max_age is None:
+            max_age = self.freshness_window
+        if self.websocket_connected and not self.websocket_is_stale(max_age):
+            return True
+        return self.has_recent_http_refresh(max_age)
 
     async def relogin(self):
         await self.http_client.close_session()
@@ -311,6 +376,29 @@ class WebBoilerClient:
         ok = _response_is_success(response)
         if not ok:
             self.logger.warning("WebBoilerClient::turn rejected response %s (%s)", response, self.log_account)
+        return ok
+
+    async def set_parameter_value(self, serial, dbindex, value) -> bool:
+        """Write an editable settings slot; True when the portal accepted it."""
+        try:
+            device = self.data.get_device_by_serial(serial)
+        except LookupError as err:
+            self.logger.error(
+                "WebBoilerClient::set_parameter_value unknown serial %s: %s (%s)",
+                serial,
+                err,
+                self.log_account,
+            )
+            return False
+        response = await self.http_client.set_parameter_value(device["id"], dbindex, value)
+        ok = _response_is_success(response)
+        if not ok:
+            self.logger.warning(
+                "WebBoilerClient::set_parameter_value rejected for slot %s: %s (%s)",
+                dbindex,
+                response,
+                self.log_account,
+            )
         return ok
 
     async def turn_circuit(self, serial, circuit, on):
