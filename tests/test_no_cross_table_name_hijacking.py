@@ -106,22 +106,21 @@ def test_cm_pelet_set_heater_keeps_its_own_name_not_generic_electric_heater() ->
     assert "Heater State" in name
 
 
-def test_peltec2_exposes_confirmed_k1_enabled_and_pump_states() -> None:
+def test_peltec2_exposes_only_the_confirmed_k1_pump_state() -> None:
     device = _make_device("peltec2", "PelTec II Lambda")
     device.create_parameter("K1B_onOff", 1)
     device.create_parameter("K1B_P", 0)
     entities = _run_sensor_setup_order(device)
 
-    enabled_name = _name_for(entities, "K1B_onOff")
-    assert enabled_name is not None
-    assert "Heating Circuit Enabled" in enabled_name
-    assert "DHW" not in enabled_name
-
+    # K1B_onOff is the circuit's own enabled state and is exposed as such;
+    # what must never happen is it being mistaken for the pump.
+    on_off_name = _name_for(entities, "K1B_onOff")
+    assert on_off_name is not None
+    assert "Pump" not in on_off_name
     p_name = _name_for(entities, "K1B_P")
     assert p_name is not None
     assert "DHW" not in p_name
     assert "K1 Circuit Pump" in p_name
-
     p_entity = next(e for e in entities if e._param_name == "K1B_P")
     assert p_entity.native_value == "Off"
 
@@ -166,7 +165,9 @@ def test_only_confirmed_peltec2_circuit_fields_are_created() -> None:
         "K1B_Tsob1",
         "K1B_zahP",
     }
-    assert exposed.isdisjoint(
+    # Confirmed against the portal's K1 circuit page in 0.2.0.14, so these are
+    # exposed now; _recSrc and _recType have no confirmed meaning and are not.
+    assert exposed.issuperset(
         {
             "K1B_CircType",
             "K1B_dayNight",
@@ -178,3 +179,4 @@ def test_only_confirmed_peltec2_circuit_fields_are_created() -> None:
             "K1B_misO",
         }
     )
+    assert exposed.isdisjoint({"K1B_recSrc", "K1B_recType"})

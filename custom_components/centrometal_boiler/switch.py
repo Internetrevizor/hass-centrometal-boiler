@@ -1,9 +1,5 @@
-import logging
-
-from .switches.WebBoilerPowerSwitch import WebBoilerPowerSwitch
 from .switches.WebBoilerCircuitSwitch import WebBoilerCircuitSwitch
-
-_LOGGER = logging.getLogger(__name__)
+from .switches.WebBoilerPowerSwitch import WebBoilerPowerSwitch
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):

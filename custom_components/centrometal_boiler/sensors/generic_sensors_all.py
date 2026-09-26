@@ -12,6 +12,21 @@ GENERIC_SENSORS_COMMON = {
 }
 
 
+def is_editable_setting(row) -> bool:
+    """Whether the portal offers this settings row for editing.
+
+    Kept here, beside the read-only table, so the two platforms cannot both
+    claim the same slot: number.py uses the same predicate.
+    """
+    return (
+        isinstance(row, dict)
+        and row.get("dbindex") is not None
+        and row.get("tip") in {"temperatura", "temperatura_0.1"}
+        and row.get("user") == "rw"
+        and bool(row.get("showButton"))
+    )
+
+
 def _device_really_has_parameter(device, param_name: str) -> bool:
     return (
         isinstance(device, dict)
@@ -22,8 +37,16 @@ def _device_really_has_parameter(device, param_name: str) -> bool:
 
 
 def get_generic_temperature_settings_sensors(device):
+    """Read-only sensors for the controller's settings slots.
+
+    A slot the portal lets this account edit gets a number entity instead, on
+    the number platform -- one entity per setting, not a read-only sensor
+    beside an editable one.
+    """
     temperature_settings: dict[str, list] = {}
     for value in device.get("temperatures", {}).values():
+        if is_editable_setting(value):
+            continue
         dbindex = value["dbindex"]
         value_param_name = f"PVAL_{dbindex}_0"
         default_param_name = f"PDEF_{dbindex}_0"

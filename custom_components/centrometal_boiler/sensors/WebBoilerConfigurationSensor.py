@@ -29,6 +29,14 @@ class WebBoilerConfigurationSensor(WebBoilerGenericSensor):
                 idx = int(self.parameter["value"])
                 if 0 <= idx < len(configurations):
                     return configurations[idx]
+                if idx >= 0:
+                    # B_KONF is zero-based and the labels above are written
+                    # 1-based, matching the portal ("1. DHW" is B_KONF 0). The
+                    # list only covers the PelTec schemes; PelTec II has many
+                    # more. Reporting the raw index for those showed a number
+                    # one below the one on the portal's own screen, so report
+                    # the portal's number instead of the internal one.
+                    return str(idx + 1)
             except Exception:
                 pass
         return self.parameter["value"]
