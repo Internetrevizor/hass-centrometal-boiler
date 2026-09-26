@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from typing import List
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+
+# A STOMP frame is terminated by a NUL byte. If the server (or a broken
+# proxy) never sends one, the "incomplete frame" remainder would grow for
+# as long as the connection lives. Real frames are a few kB at most, so
+# anything past this is corruption, not a large message: drop it and
+# resynchronise on the next terminator rather than growing without bound.
+MAX_FRAME_BUFFER_CHARS = 1_048_576
 
 
 def connect(login: str, passcode: str, host: str = "/", heartbeats: tuple[int, int] = (90000, 60000)) -> str:
@@ -41,7 +50,7 @@ def _parse_single_frame(payload: str) -> dict:
     return {"cmd": cmd, "headers": headers, "body": body}
 
 
-def extract_complete_frames(data: str, buffer: str = "") -> tuple[List[dict], str]:
+def extract_complete_frames(data: str, buffer: str = "") -> tuple[list[dict], str]:
     """Return complete STOMP frames plus any incomplete remainder.
 
     Websocket message boundaries do not always match STOMP frame boundaries, so
@@ -60,6 +69,13 @@ def extract_complete_frames(data: str, buffer: str = "") -> tuple[List[dict], st
     parts = combined.split("\x00")
     remainder = parts.pop()
 
+    if len(remainder) > MAX_FRAME_BUFFER_CHARS:
+        _LOGGER.warning(
+            "Discarding %d characters of unterminated STOMP data; no frame terminator arrived",
+            len(remainder),
+        )
+        remainder = ""
+
     for chunk in parts:
         if not chunk:
             continue
@@ -76,7 +92,7 @@ def unpack_frame(data: str) -> dict:
     return frames[0] if frames else {"cmd": "HEARTBEAT", "headers": {}, "body": ""}
 
 
-def unpack_frames(data: str) -> List[dict]:
+def unpack_frames(data: str) -> list[dict]:
     """Parse one websocket payload into one or more STOMP frames.
 
     This helper only returns frames that are complete within the provided data.

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from . import stomp
 from .logging_utils import redact_account
-from .HttpClient import build_verified_ssl_context
+from .HttpClient import SSLContextFactory, build_verified_ssl_context
 from .const import (
     WEB_BOILER_STOMP_DEVICE_TOPIC,
     WEB_BOILER_STOMP_LOGIN_PASSCODE,
@@ -19,8 +18,18 @@ from .const import (
 
 
 class WebBoilerWsClient:
-    def __init__(self, hass, connected_callback, disconnected_callback, error_callback, data_callback):
+    def __init__(
+        self,
+        hass,
+        connected_callback,
+        disconnected_callback,
+        error_callback,
+        data_callback,
+        *,
+        ssl_context_factory: SSLContextFactory | None = None,
+    ):
         self.logger = logging.getLogger(__name__)
+        self._ssl_context_factory = ssl_context_factory
         self.hass = hass
         self.connected_callback = connected_callback
         self.disconnected_callback = disconnected_callback
@@ -30,14 +39,17 @@ class WebBoilerWsClient:
         self.log_account = "account-unknown"
         self.subscription_index = 0
         self._ws = None
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._connected_event = asyncio.Event()
-        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: asyncio.Task | None = None
 
     async def _create_ssl_context(self):
+        # Same rule as the HTTP client: never build (or even look up) an SSL
+        # context on the event loop thread.
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, build_verified_ssl_context)
+        factory = self._ssl_context_factory or build_verified_ssl_context
+        return await loop.run_in_executor(None, factory)
 
     async def _heartbeat_loop(self, ws) -> None:
         # We wait on the stop event with a 30-second timeout instead of
@@ -48,7 +60,7 @@ class WebBoilerWsClient:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=30)
                 # Stop event triggered — exit cleanly.
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             try:
                 await ws.send("\n")
@@ -178,18 +190,20 @@ class WebBoilerWsClient:
     async def start(self, username: str) -> None:
         self.username = username
         self.log_account = redact_account(username)
+        # Checked before touching the events: clearing _connected_event on a
+        # connection that is already up would throw away the fact that it is.
+        if self.is_running():
+            return
         self.subscription_index = 0
         self._stop_event.clear()
         self._connected_event.clear()
-        if self.is_running():
-            return
         if self.hass is not None:
             self._task = self.hass.async_create_background_task(self._run(), f"{__name__}-{self.log_account}")
         else:
             self._task = asyncio.create_task(self._run())
         try:
             await asyncio.wait_for(self._connected_event.wait(), timeout=20)
-        except asyncio.TimeoutError as err:
+        except TimeoutError as err:
             await self.close()
             raise ConnectionError(f"Timed out waiting for websocket CONNECTED frame ({self.log_account})") from err
 

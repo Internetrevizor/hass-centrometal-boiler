@@ -162,12 +162,12 @@ def test_exact_clutter_parameters_from_device_page_are_not_created() -> None:
         "B_zahPa",
         "B_zahK1_K2",
         "B_zahValve",
-        "K1B_CircType",
-        "K1B_dayNight",
-        "K1B_kor",
-        "K1B_korN",
-        "K1B_korType",
-        "K1B_Prec",
+        # B_fan, B_fanB and B_rpm join the list: across an 8.5-hour capture on
+        # v3.03dL the controller published none of them to the portal, so an
+        # entity for them could only ever show a frozen zero.
+        "B_fan",
+        "B_fanB",
+        "B_rpm",
     }
     assert exposed.isdisjoint(forbidden)
 
@@ -184,7 +184,8 @@ def test_portal_confirmed_values_and_invalid_sentinels() -> None:
     assert by_param["B_signal"].state_class is None
     assert by_param["B_signal"].extra_state_attributes["Signal reported by controller"] is False
     assert by_param["B_specG"].native_value == "None"
-    assert by_param["B_start"].native_value == "Idle"
+    # The capture has B_STATE OFF, so the burner is commanded stopped.
+    assert by_param["B_start"].native_value == "Stopped"
     assert by_param["B_Oxy1"].native_value == 25.5
     assert by_param["B_Oxy1"].available is True
     assert by_param["B_Oxy1"].extra_state_attributes["Measurement active"] is False
@@ -203,8 +204,12 @@ def test_portal_confirmed_values_and_invalid_sentinels() -> None:
     assert by_param["K1B_Tsob"].state_class is None
     assert by_param["K1B_onOff"].native_value == "On"
     assert by_param["K1B_zahP"].native_value == "Off"
-    assert by_param["B_P1"].native_value == "Off"
-    assert by_param["B_P1"].name.endswith("P1 Pump")
+    # B_P1 is the K1 circuit's pump here -- B_P1, B_Pk1_k2 and K1B_P changed
+    # in the same millisecond on all seven switching cycles of the capture --
+    # so only the circuit entity is created for it.
+    assert "B_P1" not in by_param
+    assert by_param["K1B_P"].native_value == "Off"
+    assert "B_P1" not in by_param
     assert by_param["B_gri"].native_value == "Off"
     assert by_param["B_razina"].native_value == "Full"
     assert by_param["B_razP"].native_value == 99.0
@@ -257,7 +262,7 @@ def test_documented_screen_telemetry_from_full_http_snapshot() -> None:
 
     assert by_param["B_FotV"].native_value == 1001.0
     assert by_param["B_FotV"].extra_state_attributes["Over range"] is True
-    assert by_param["B_fan"].native_value == 0.0
+    assert "B_fan" not in by_param
     assert by_param["B_misP"].native_value == 0.0
     assert by_param["B_puz"].native_value == "Off"
     assert by_param["B_tur"].native_value == "Off"
@@ -315,6 +320,17 @@ def test_configuration_12_maps_to_portal_configuration_13() -> None:
     device = _make_device({"B_KONF": "12"})
     entity = WebBoilerConfigurationSensor.create_entities(None, device)[0]
     assert entity.native_value == "13. DHC 2X"
+
+
+def test_unlabelled_configuration_reports_the_portal_scheme_number() -> None:
+    """PelTec II has more hydraulic schemes than the labelled list covers.
+
+    The labels are 1-based and B_KONF is 0-based, so falling back to the raw
+    value showed a number one below the one on the portal's screen.
+    """
+    device = _make_device({"B_KONF": 42})
+    entity = WebBoilerConfigurationSensor.create_entities(None, device)[0]
+    assert entity.native_value == "43"
 
 
 def test_external_start_is_decoded_without_a_raw_auxiliary_input_sensor() -> None:

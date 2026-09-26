@@ -16,6 +16,15 @@ class HttpHelperLookupError(LookupError):
     """Raised when a requested device cannot be found in the installations list."""
 
 
+class HttpHelperIndexError(HttpHelperLookupError, IndexError):
+    """Raised for an out-of-range device index.
+
+    Subclasses both so every lookup failure in this class can be caught as
+    ``HttpHelperLookupError`` while callers written against the previous
+    ``IndexError`` keep working unchanged.
+    """
+
+
 class HttpHelper:
     def __init__(self, client: HttpClient) -> None:
         self.client = client
@@ -27,7 +36,9 @@ class HttpHelper:
         # Kept under the legacy camelCase name to preserve the public API.
         if 0 <= index < self.get_device_count():
             return self.client.installations[index]
-        raise IndexError(f"HttpHelper.getDevice: invalid index {index} (have {self.get_device_count()} device(s))")
+        raise HttpHelperIndexError(
+            f"HttpHelper.getDevice: invalid index {index} (have {self.get_device_count()} device(s))"
+        )
 
     def get_device_by_id(self, id: str | int) -> dict[str, Any]:
         target = str(id)

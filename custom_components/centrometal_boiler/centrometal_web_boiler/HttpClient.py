@@ -10,8 +10,16 @@ heavy C-extension that adds install friction on ARM-based Home Assistant hosts
 TLS certificate verification is always enabled. Certificate failures reported
 against this endpoint were traced to outdated CA trust stores on some Home
 Assistant hosts rather than anything wrong with the server's certificate
-chain, so verification is performed against the bundled, regularly-updated
-``certifi`` root store instead of being disabled.
+chain, so verification is performed against a current root store instead of
+being disabled.
+
+Which store that is comes from the caller. Under Home Assistant the framework
+layer injects ``homeassistant.util.ssl.get_default_context``, which is built
+once at import time from ``certifi`` (or ``REQUESTS_CA_BUNDLE`` when the user
+set one) and shared process-wide. Standalone -- tests, scripts -- the built-in
+``build_verified_ssl_context`` is used, which prefers ``certifi`` when it is
+installed and falls back to the interpreter's default store when it is not.
+Verification is never disabled on any of those paths.
 """
 
 from __future__ import annotations
@@ -20,6 +28,7 @@ import asyncio
 import json
 import logging
 import ssl
+from collections.abc import Callable
 from html.parser import HTMLParser
 from typing import Any
 
@@ -29,6 +38,18 @@ from .const import WEB_BOILER_WEBROOT
 from .logging_utils import redact_account
 
 DEFAULT_CLIENT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10, sock_connect=10, sock_read=20)
+
+# Supplied by the Home Assistant layer so the integration can reuse Home
+# Assistant's own cached SSL context instead of building (and paying for) a
+# second one. Kept as a plain callable so this package still imports and
+# runs with no Home Assistant present.
+SSLContextFactory = Callable[[], ssl.SSLContext]
+
+# Keys that identify the installation or its owner. Redacted from debug
+# dumps so a log pasted into a GitHub issue does not carry the address of
+# someone's house -- the same policy diagnostics.py applies.
+_PII_KEYS = frozenset({"address", "place", "city", "country", "countryCode", "email", "phone", "tel"})
+_INSTALLATION_PII_KEYS = _PII_KEYS | {"label", "value", "serial", "id"}
 
 # Fragment that appears on the unauthenticated login page. Used to detect
 # session expiry on JSON endpoints (which then return the login HTML rather
@@ -85,13 +106,29 @@ class _LoadingDivPresent(HTMLParser):
 def _extract_csrf_token(html_text: str) -> str | None:
     parser = _CsrfTokenExtractor()
     parser.feed(html_text)
+    parser.close()
     return parser.token
 
 
 def _login_succeeded(html_text: str) -> bool:
     parser = _LoadingDivPresent()
     parser.feed(html_text)
+    parser.close()
     return parser.found
+
+
+def _redact(value: Any, keys: frozenset[str] | set[str] = _PII_KEYS) -> Any:
+    """Return ``value`` with any key in ``keys`` replaced by a marker.
+
+    Recursive and non-destructive: the caller keeps the original payload, the
+    log gets the redacted copy. Parameter values themselves are never touched,
+    because they are the whole point of reading a debug log.
+    """
+    if isinstance(value, dict):
+        return {k: ("**redacted**" if k in keys else _redact(v, keys)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(item, keys) for item in value]
+    return value
 
 
 def build_verified_ssl_context() -> ssl.SSLContext:
@@ -112,14 +149,17 @@ def build_verified_ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
-async def _make_connector() -> aiohttp.TCPConnector:
+async def _make_connector(ssl_context_factory: SSLContextFactory | None = None) -> aiohttp.TCPConnector:
     # build_verified_ssl_context() does blocking disk I/O (reading and
     # parsing the certifi CA bundle via ssl.create_default_context's
     # internal load_verify_locations). Must never run directly on the
     # event loop -- this exact call used to, and Home Assistant's
-    # blocking-call detector caught it in production.
+    # blocking-call detector caught it in production. An injected factory
+    # (Home Assistant's cached context) is cheap, but it goes through the
+    # same executor hop so no caller can ever reintroduce that bug.
     loop = asyncio.get_running_loop()
-    ssl_ctx = await loop.run_in_executor(None, build_verified_ssl_context)
+    factory = ssl_context_factory or build_verified_ssl_context
+    ssl_ctx = await loop.run_in_executor(None, factory)
     return aiohttp.TCPConnector(
         resolver=aiohttp.DefaultResolver(),
         use_dns_cache=True,
@@ -138,8 +178,9 @@ class HttpClientBase:
         "Content-Type": "application/json;charset=UTF-8",
     }
 
-    def __init__(self, username: str, password: str) -> None:
+    def __init__(self, username: str, password: str, *, ssl_context_factory: SSLContextFactory | None = None) -> None:
         self.logger = logging.getLogger(__name__)
+        self._ssl_context_factory = ssl_context_factory
         self.username = username
         self.password = password
         self.log_account = redact_account(username)
@@ -175,7 +216,13 @@ class HttpClientBase:
             # the lock.
             session = self.http_session
             if session is None or session.closed:
-                session = aiohttp.ClientSession(connector=await _make_connector(), timeout=DEFAULT_CLIENT_TIMEOUT)
+                # Called without arguments when no factory was injected so a
+                # test double for _make_connector keeps its simple signature.
+                if self._ssl_context_factory is None:
+                    connector = await _make_connector()
+                else:
+                    connector = await _make_connector(self._ssl_context_factory)
+                session = aiohttp.ClientSession(connector=connector, timeout=DEFAULT_CLIENT_TIMEOUT)
                 self.http_session = session
             return session
 
@@ -217,7 +264,7 @@ class HttpClientBase:
                 if response.status != expected_code:
                     raise HttpClientConnectionError(f"{method.upper()} {url} failed with http code {response.status}")
                 return await response.text()
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             raise HttpClientConnectionError(f"{method.upper()} request failed for {url}: {err}") from err
 
     async def _http_get(self, url: str, expected_code: int = 200) -> str:
@@ -269,8 +316,8 @@ class HttpClientBase:
 
 
 class HttpClient(HttpClientBase):
-    def __init__(self, username: str, password: str) -> None:
-        super().__init__(username, password)
+    def __init__(self, username: str, password: str, *, ssl_context_factory: SSLContextFactory | None = None) -> None:
+        super().__init__(username, password, ssl_context_factory=ssl_context_factory)
         # State populated lazily by the public API. Declared here so attribute
         # access never raises AttributeError before the first call, and so
         # static analysis can see the contract.
@@ -314,12 +361,19 @@ class HttpClient(HttpClientBase):
 
     async def get_installations(self) -> list[dict[str, Any]]:
         payload = await self._http_post_json("/data/autocomplete/installation", data=json.dumps({}))
-        self.installations = payload["installations"]
-        self.logger.debug(
-            "HttpClient::get_installations -> %s (%s)",
-            json.dumps(self.installations, indent=4),
-            self.log_account,
-        )
+        try:
+            self.installations = payload["installations"]
+        except (KeyError, TypeError) as err:
+            raise HttpClientConnectionError("Installation list response had no 'installations' key") from err
+        # json.dumps() of the full payload is not free, and arguments are
+        # evaluated before the logger checks the level -- so this only runs
+        # when debug logging is actually on.
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "HttpClient::get_installations -> %s (%s)",
+                json.dumps(_redact(self.installations, _INSTALLATION_PII_KEYS)),
+                self.log_account,
+            )
         return self.installations
 
     async def get_installation_status_all(self, ids: list[str | int]) -> dict[str, Any]:
@@ -327,22 +381,24 @@ class HttpClient(HttpClientBase):
         self.installation_status_all = await self._http_post_json(
             "/wdata/data/installation-status-all", data=json.dumps(data)
         )
-        self.logger.debug(
-            "HttpClient::get_installation_status_all -> %s (%s)",
-            json.dumps(self.installation_status_all, indent=4),
-            self.log_account,
-        )
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "HttpClient::get_installation_status_all -> %s (%s)",
+                json.dumps(_redact(self.installation_status_all)),
+                self.log_account,
+            )
         return self.installation_status_all
 
     async def get_parameter_list(self, serial: str) -> dict[str, Any]:
         self.parameter_list[serial] = await self._http_post_json(
             "/wdata/data/parameter-list/" + serial, data=json.dumps({})
         )
-        self.logger.debug(
-            "HttpClient::get_parameter_list -> %s (%s)",
-            json.dumps(self.parameter_list[serial], indent=4),
-            self.log_account,
-        )
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "HttpClient::get_parameter_list -> %s (%s)",
+                json.dumps(_redact(self.parameter_list[serial])),
+                self.log_account,
+            )
         return self.parameter_list[serial]
 
     async def get_errors_list(self, id: str | int, *, interval: int = 1440, error_type: str = "*") -> dict[str, Any]:
@@ -374,6 +430,18 @@ class HttpClient(HttpClientBase):
         # NOTE: this is intentionally synchronous; it produces a list of
         # coroutine objects for the caller to ``await asyncio.gather(...)``.
         return [self.get_table_data(id, tableStartIndex, i) for i in range(1, tableSize + 1)]
+
+    async def set_parameter_value(self, id: str | int, dbindex: int | str, value: float) -> dict[str, Any]:
+        """Write an editable settings slot.
+
+        Captured from the portal's own request when the pencil on a settings
+        row is used: {"cmd-name": "PWR 67", "cmd-value": 66} sets slot 67
+        ("Buffer tank temperature") to 66 C. Same envelope as the boiler
+        on/off command, and the value is the plain reading -- slot 67 holds
+        40..85 for 40..85 C, so there is no scaling.
+        """
+        data = {"cmd-name": f"PWR {dbindex}", "cmd-value": value}
+        return await self._control(id, data)
 
     async def turn_device_by_id(self, id: str | int, on: bool) -> dict[str, Any]:
         cmd_value = 1 if on else 0

@@ -8,12 +8,30 @@ import homeassistant.util.dt as dt_util
 
 from .const import DOMAIN
 
+TIMESTAMP_FORMAT = "%d.%m.%Y %H:%M:%S"
+
+
+def display_value(value, fallback: str = "?") -> str:
+    """Render a parameter value for display without swallowing falsy values.
+
+    ``value or fallback`` turned a real ``0`` (and an empty string) into the
+    literal text "None", which is how a 0 kW rated power or a 0-valued
+    attribute ended up reported as missing. The fallback stays "?" so a
+    parameter the controller has not sent reads exactly as it did before --
+    device names and attributes must not change text over this fix.
+    """
+    if value is None or value == "":
+        return fallback
+    return value
+
 
 def create_device_info(device) -> DeviceInfo:
-    param_power = device.get_parameter("B_sng")
-    param_fw_ver = device.get_parameter("B_VER")
-    power = param_power.get("value") or "None"
-    firmware_ver = param_fw_ver.get("value") or "None"
+    # Read through the parameters dict rather than device.get_parameter(),
+    # which creates a placeholder parameter as a side effect — this runs from
+    # entity properties, and a property must not mutate the cache.
+    parameters = device.get("parameters", {})
+    power = display_value((parameters.get("B_sng") or {}).get("value"))
+    firmware_ver = display_value((parameters.get("B_VER") or {}).get("value"))
     model = f"{device['product']} {power}"
     serial = device["serial"]
     name = f"Centrometal Boiler {model} {serial}"
@@ -28,10 +46,17 @@ def create_device_info(device) -> DeviceInfo:
 
 
 def format_time(hass: HomeAssistant, timestamp, tzinfo=None) -> str:
-    if tzinfo is None:
-        tzinfo = dt_util.get_time_zone(hass.config.time_zone)
-    dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
-    return dt.astimezone(tzinfo).strftime("%d.%m.%Y %H:%M:%S")
+    """Format a UTC epoch timestamp in the user's local time zone.
+
+    Uses dt_util.as_local() rather than dt_util.get_time_zone(): the latter
+    resolves a zone name through zoneinfo, which reads from disk and trips
+    Home Assistant's blocking-call detector when called from an entity
+    property. as_local() uses the time zone core already resolved at startup.
+    """
+    dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC)
+    if tzinfo is not None:
+        return dt.astimezone(tzinfo).strftime(TIMESTAMP_FORMAT)
+    return dt_util.as_local(dt).strftime(TIMESTAMP_FORMAT)
 
 
 def format_name(hass: HomeAssistant, device, name) -> str:

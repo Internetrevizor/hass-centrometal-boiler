@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import hashlib
 import logging
 import time
 
@@ -17,6 +16,7 @@ from .centrometal_web_boiler import (
     HttpClientConnectionError,
     WebBoilerClient,
     next_retry_delay,
+    redact_account,
 )
 from .const import (
     CONF_REFRESH_INTERVAL,
@@ -31,14 +31,20 @@ from .runtime import CentrometalRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
+try:
+    # Home Assistant builds this context once, at import time, from certifi
+    # (or REQUESTS_CA_BUNDLE when the user configured one) and shares it
+    # process-wide. Reusing it means no second CA bundle parse per session and
+    # no separate certifi requirement in the manifest. Guarded so an older or
+    # future core that moves the helper degrades to the client's own builder
+    # instead of failing to load the integration.
+    from homeassistant.util.ssl import get_default_context as _ha_ssl_context_factory
+except ImportError:  # pragma: no cover - depends on the running core version
+    _ha_ssl_context_factory = None
+    _LOGGER.debug("homeassistant.util.ssl.get_default_context unavailable; using the bundled CA store")
 
-def _redact_account(account: str) -> str:
-    """Return a stable non-reversible account identifier for logs."""
-    digest = hashlib.sha256(account.encode()).hexdigest()[:8]
-    return f"account-{digest}"
 
-
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.NUMBER]
 CentrometalConfigEntry = ConfigEntry[CentrometalRuntimeData]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -112,13 +118,19 @@ class WebBoilerSystem:
         self._entry = entry
         self.username = username
         self.password = password
-        self._log_account = _redact_account(username)
+        self._log_account = redact_account(username)
         prefix = prefix.rstrip()
         self.prefix = (prefix + " ") if prefix else ""
-        self.web_boiler_client = WebBoilerClient(hass)
+        self.web_boiler_client = WebBoilerClient(hass, ssl_context_factory=_ha_ssl_context_factory)
+        # Entities must not go unavailable between two scheduled refreshes, so
+        # the window follows the configured interval instead of a fixed 300 s
+        # that a longer interval would immediately outrun. Set after
+        # refresh_interval exists — reading it one line too early raised
+        # AttributeError and failed setup outright.
         self.refresh_interval = entry.options.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL)
         self.retry_base_interval = entry.options.get(CONF_RETRY_BASE_INTERVAL, DEFAULT_RETRY_BASE_INTERVAL)
         self.retry_max_interval = entry.options.get(CONF_RETRY_MAX_INTERVAL, DEFAULT_RETRY_MAX_INTERVAL)
+        self.web_boiler_client.freshness_window = max(300.0, self.refresh_interval * 2)
         # Counts consecutive failed relogin attempts so retries back off
         # instead of hammering the server on a fixed cadence during a
         # prolonged outage. Reset to 0 on the next fully successful login.
@@ -166,7 +178,10 @@ class WebBoilerSystem:
         if len(self.web_boiler_client.data) == 0:
             raise ConfigEntryNotReady("No device found on Centrometal boiler server")
         self._annotate_devices()
-        await self.web_boiler_client.start_websocket(self.on_parameter_updated)
+        # A missing realtime channel degrades the integration to HTTP polling;
+        # it does not make it unusable. Refusing to set up would leave the user
+        # with no entities at all when, for example, port 15671 is blocked.
+        await self._start_websocket()
         try:
             refresh_ok = await self.web_boiler_client.refresh()
         except HttpClientAuthError:
@@ -236,25 +251,21 @@ class WebBoilerSystem:
 
         if not connected:
             disconnected_for = self.web_boiler_client.websocket_disconnected_for()
+            # HTTP polling continues for the whole outage, not only while the
+            # reconnect loop happens to be alive. The websocket can be down for
+            # reasons that have nothing to do with the HTTP API (a blocked
+            # port, a broker restart), and entities must not go unavailable
+            # while the data is still perfectly reachable.
+            await self._refresh_if_due(now, relogin_on_failure=False)
             # Tolerance: keep using the existing reconnect loop for up to 3x
             # the *base* relogin retry interval (not the backed-off value, so
-            # this window doesn't grow along with the backoff). While we
-            # wait, keep refreshing state via HTTP so HA entities don't go
-            # stale.
+            # this window doesn't grow along with the backoff).
             if websocket_running and disconnected_for < (self.retry_base_interval * 3):
                 _LOGGER.debug(
                     "Centrometal websocket disconnected for %.0fs but reconnect loop is active (%s)",
                     disconnected_for,
                     self._log_account,
                 )
-                if now - self.last_refresh_timestamp > self.refresh_interval:
-                    self.last_refresh_timestamp = now
-                    try:
-                        await self.web_boiler_client.refresh()
-                    except HttpClientAuthError:
-                        await self._silent_http_relogin()
-                    except HttpClientConnectionError:
-                        pass
                 return
             if now - self.last_relogin_timestamp > self._current_retry_delay():
                 _LOGGER.info(
@@ -265,22 +276,46 @@ class WebBoilerSystem:
                 await self.relogin()
             return
 
-        if now - self.last_refresh_timestamp > self.refresh_interval:
-            self.last_refresh_timestamp = now
-            _LOGGER.info("WebBoilerSystem::tick refresh data %s", self._log_account)
-            try:
-                refresh_successful = await self.web_boiler_client.refresh()
-            except HttpClientAuthError:
-                _LOGGER.info(
-                    "WebBoilerSystem::tick HTTP session expired during refresh, attempting silent relogin %s",
-                    self._log_account,
-                )
-                await self._silent_http_relogin()
-                return
-            except HttpClientConnectionError:
-                refresh_successful = False
-            if not refresh_successful:
-                await self.relogin()
+        await self._refresh_if_due(now, relogin_on_failure=True)
+
+    async def _refresh_if_due(self, now: float, *, relogin_on_failure: bool) -> None:
+        """Run the periodic HTTP refresh when the interval has elapsed.
+
+        ``relogin_on_failure`` is False while the websocket is already known to
+        be down: that path does its own, backed-off relogin scheduling, and a
+        failed refresh there must not bypass it with an immediate extra
+        attempt.
+        """
+        # >= , not > : the tick runs once a minute, so "strictly greater"
+        # pushed a 240 s interval to the next tick at 300 s. That put the
+        # real refresh period exactly on the freshness window and made
+        # availability depend on tick jitter.
+        if now - self.last_refresh_timestamp < self.refresh_interval:
+            return
+        self.last_refresh_timestamp = now
+        _LOGGER.debug("WebBoilerSystem::tick refresh data %s", self._log_account)
+        try:
+            refresh_successful = await self.web_boiler_client.refresh()
+        except HttpClientAuthError:
+            _LOGGER.info(
+                "WebBoilerSystem::tick HTTP session expired during refresh, attempting silent relogin %s",
+                self._log_account,
+            )
+            await self._silent_http_relogin()
+            return
+        except HttpClientConnectionError:
+            refresh_successful = False
+        if not refresh_successful and relogin_on_failure:
+            await self.relogin()
+
+    async def async_recover_http_session(self) -> None:
+        """Public entry point for entities that hit an expired HTTP session.
+
+        A control command that fails on an expired session is worth recovering
+        from immediately instead of waiting for the next tick, but the entity
+        should not have to know how the session is rebuilt.
+        """
+        await self._silent_http_relogin()
 
     async def _silent_http_relogin(self):
         """Re-establish the HTTP session silently after session/cookie expiration.
@@ -356,26 +391,58 @@ class WebBoilerSystem:
             _LOGGER.warning("WebBoilerSystem relogin failed due to connection error %s (%s)", err, self._log_account)
             return
 
-        if relogin_successful:
-            self._record_relogin_success()
-            self._annotate_devices()
-            await self.web_boiler_client.start_websocket(self.on_parameter_updated)
-            try:
-                ok = await self.web_boiler_client.refresh()
-            except HttpClientAuthError:
-                # Relogin just succeeded, so credentials are valid.
-                # Treat this as a transient server-side issue.
-                _LOGGER.warning(
-                    "WebBoilerSystem refresh got login page right after successful "
-                    "relogin — treating as transient, not triggering reauth %s",
-                    self._log_account,
-                )
-                ok = False
-            except HttpClientConnectionError:
-                ok = False
-            if ok:
-                self.last_refresh_timestamp = time.monotonic()
+        if not relogin_successful:
+            self._record_relogin_failure()
+            _LOGGER.warning("WebBoilerSystem::tick failed to relogin %s", self._log_account)
             return
 
-        self._record_relogin_failure()
-        _LOGGER.warning("WebBoilerSystem::tick failed to relogin %s", self._log_account)
+        self._annotate_devices()
+        websocket_ok = await self._start_websocket()
+        try:
+            ok = await self.web_boiler_client.refresh()
+        except HttpClientAuthError:
+            # Relogin just succeeded, so credentials are valid.
+            # Treat this as a transient server-side issue.
+            _LOGGER.warning(
+                "WebBoilerSystem refresh got login page right after successful "
+                "relogin — treating as transient, not triggering reauth %s",
+                self._log_account,
+            )
+            ok = False
+        except HttpClientConnectionError:
+            ok = False
+        if ok:
+            self.last_refresh_timestamp = time.monotonic()
+
+        # Success means the realtime channel is actually back. Recording
+        # success on the HTTP login alone reset the backoff counter on every
+        # attempt, so a websocket-only outage was retried at the base interval
+        # forever — exactly what the backoff exists to prevent.
+        if websocket_ok:
+            self._record_relogin_success()
+        else:
+            self._record_relogin_failure()
+
+    async def _start_websocket(self) -> bool:
+        """Start the realtime channel; return whether it came up.
+
+        Never raises: a websocket that will not connect is a degraded mode
+        (HTTP polling still feeds every entity), not a reason to abort setup or
+        to abandon the rest of a relogin.
+        """
+        try:
+            await self.web_boiler_client.start_websocket(self.on_parameter_updated)
+            return True
+        except (ConnectionError, HttpClientConnectionError) as err:
+            _LOGGER.warning(
+                "Centrometal websocket could not be started (%s); continuing on HTTP polling %s",
+                err,
+                self._log_account,
+            )
+            return False
+        except Exception:
+            _LOGGER.exception(
+                "Unexpected error starting the Centrometal websocket; continuing on HTTP polling %s",
+                self._log_account,
+            )
+            return False

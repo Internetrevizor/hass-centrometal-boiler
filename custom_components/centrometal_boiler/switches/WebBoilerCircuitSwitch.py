@@ -1,12 +1,16 @@
-import datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.exceptions import HomeAssistantError
-import homeassistant.util.dt as dt_util
 
-from ..common import create_device_info, format_name
+from ..centrometal_web_boiler import HttpClientAuthError
+from ..common import create_device_info, format_name, format_time
+from .circuit_state import (
+    circuit_state_fallback_name,
+    state_from_circuit_parameter,
+    state_from_slot,
+)
 
 
 class WebBoilerCircuitSwitch(SwitchEntity):
@@ -32,6 +36,8 @@ class WebBoilerCircuitSwitch(SwitchEntity):
         self._param_state["used"] = True
         self._param_off["used"] = True
         self._param_on["used"] = True
+        self._fallback_name = circuit_state_fallback_name(naslov)
+        self._fallback_callback_registered = False
 
     async def async_will_remove_from_hass(self) -> None:
         try:
@@ -39,6 +45,10 @@ class WebBoilerCircuitSwitch(SwitchEntity):
             self._param_state.set_update_callback(None, self._table_key)
             self._param_off.set_update_callback(None, self._table_key)
             self._param_on.set_update_callback(None, self._table_key)
+            fallback = self._fallback_parameter()
+            if fallback is not None:
+                fallback.set_update_callback(None, self._table_key)
+                self._fallback_callback_registered = False
         except Exception:
             pass
 
@@ -48,12 +58,37 @@ class WebBoilerCircuitSwitch(SwitchEntity):
         self._param_state.set_update_callback(self.update_callback, self._table_key)
         self._param_off.set_update_callback(self.update_callback, self._table_key)
         self._param_on.set_update_callback(self.update_callback, self._table_key)
+        self._register_fallback_callback()
+
+    def _fallback_parameter(self):
+        """Look the fallback parameter up on every read.
+
+        Read through the parameters dict, never get_parameter(): this must not
+        create a placeholder for a circuit the controller does not report. The
+        lookup is repeated rather than cached in __init__ because a parameter
+        that arrives after the entity was built would otherwise never be seen.
+        """
+        if not self._fallback_name:
+            return None
+        return self._device.get("parameters", {}).get(self._fallback_name)
+
+    def _register_fallback_callback(self) -> None:
+        if self._fallback_callback_registered:
+            return
+        fallback = self._fallback_parameter()
+        if fallback is None:
+            return
+        fallback.set_update_callback(self.update_callback, self._table_key)
+        self._fallback_callback_registered = True
 
     @property
     def should_poll(self) -> bool:
         return False
 
     async def update_callback(self, _device):
+        # Cheap and idempotent: picks the fallback up if it only appeared after
+        # the entity was created.
+        self._register_fallback_callback()
         self.async_write_ha_state()
 
     @property
@@ -64,69 +99,46 @@ class WebBoilerCircuitSwitch(SwitchEntity):
     def unique_id(self) -> str:
         return self._unique_id
 
-    @staticmethod
-    def _coerce_number(value):
-        try:
-            return float(str(value).strip().replace(",", "."))
-        except (ValueError, TypeError, AttributeError):
-            return None
+    def _state_from_pval(self) -> bool | None:
+        return state_from_slot(
+            self._param_state.get("value"),
+            self._param_off.get("value"),
+            self._param_on.get("value"),
+        )
 
-    @staticmethod
-    def _coerce_bool(value):
-        if isinstance(value, bool):
-            return value
-        text = str(value).strip().lower()
-        if text in ("1", "on", "true", "yes", "active", "enabled"):
-            return True
-        if text in ("0", "off", "false", "no", "inactive", "disabled"):
-            return False
-        return None
+    def _state_from_circuit_parameter(self) -> bool | None:
+        fallback = self._fallback_parameter()
+        if fallback is None:
+            return None
+        return state_from_circuit_parameter(fallback.get("value"))
 
     @property
     def is_on(self) -> bool | None:
-        """Return circuit state from the live PVAL value.
+        """Return the circuit state, preferring the row's own PVAL slot.
 
-        Some Centrometal circuit rows, especially DHW, do not report the live
-        ON state as exactly PMAX. The command API still uses 1/0, while the
-        parameter table may expose PMAX as a limit/option value instead of the
-        current ON value. Treat anything different from PMIN/OFF as ON, and
-        keep PMAX as a fallback for devices that do not expose PMIN.
+        The portal does not send that slot in every status response, and while
+        it is missing the switch used to sit at "unknown" indefinitely. The
+        circuit's own on/off parameter carries the same state and is sent
+        reliably, so it answers for the row until the slot comes back.
         """
-        try:
-            state_raw = self._param_state["value"]
-        except KeyError:
-            return None
+        state = self._state_from_pval()
+        if state is not None:
+            return state
+        return self._state_from_circuit_parameter()
 
-        state_bool = self._coerce_bool(state_raw)
-        if state_bool is not None:
-            return state_bool
-
-        state_num = self._coerce_number(state_raw)
-        if state_num is None:
-            return None
-
-        off_num = self._coerce_number(self._param_off.get("value"))
-        if off_num is not None:
-            return state_num != off_num
-
-        on_num = self._coerce_number(self._param_on.get("value"))
-        if on_num is not None:
-            return state_num == on_num
-
-        return state_num != 0
+    @property
+    def icon(self) -> str:
+        return "mdi:radiator" if self.is_on else "mdi:radiator-off"
 
     @property
     def available(self) -> bool:
         return self.web_boiler_client.has_fresh_data()
 
     def _compute_last_updated_str(self) -> str:
-        tzinfo = dt_util.get_time_zone(self.hass.config.time_zone)
         try:
             raw_ts = self._param_state["timestamp"]
             if raw_ts is not None:
-                # Fixed: use timezone-aware fromtimestamp (Python 3.12+ deprecation)
-                dt = datetime.datetime.fromtimestamp(int(raw_ts), tz=datetime.timezone.utc)
-                return dt.astimezone(tzinfo).strftime("%d.%m.%Y %H:%M:%S")
+                return format_time(self.hass, int(raw_ts))
         except Exception:
             pass
         return "?"
@@ -141,21 +153,43 @@ class WebBoilerCircuitSwitch(SwitchEntity):
             attrs["PVAL"] = self._param_state.get("value")
             attrs["PMIN"] = self._param_off.get("value") if self._param_off else None
             attrs["PMAX"] = self._param_on.get("value") if self._param_on else None
+            fallback = self._fallback_parameter()
+            attrs["State source"] = "PVAL" if self._state_from_pval() is not None else self._fallback_name
+            if fallback is not None:
+                attrs[self._fallback_name] = fallback.get("value")
         except Exception:
             pass
         return attrs
 
     async def turn_circuit_on_off(self, value: bool):
-        ok = await self.web_boiler_client.turn_circuit(self._device["serial"], self._dbindex, value)
-        if not ok:
-            await self._system.relogin()
+        try:
+            accepted = await self.web_boiler_client.turn_circuit(self._device["serial"], self._dbindex, value)
+        except HttpClientAuthError as err:
+            await self._system.async_recover_http_session()
+            raise HomeAssistantError(
+                "The Centrometal session had expired, so the heating circuit command was not sent. "
+                "Please try again."
+            ) from err
+        if not accepted:
+            # A rejected command used to trigger a full relogin, which tears
+            # down the websocket for every device on the account. The
+            # controller refusing one circuit command says nothing about the
+            # session; if the session really is gone, the branch above and the
+            # periodic tick both handle it.
             raise HomeAssistantError("Failed to send the heating circuit command")
-        refreshed = await self.web_boiler_client.refresh()
+        try:
+            refreshed = await self.web_boiler_client.refresh()
+        except HttpClientAuthError as err:
+            await self._system.async_recover_http_session()
+            raise HomeAssistantError(
+                "The heating circuit command was sent, but the Centrometal session expired before the "
+                "state could be refreshed"
+            ) from err
         if not refreshed:
             raise HomeAssistantError(
                 "The heating circuit command was sent, but the integration could not refresh the latest state"
             )
-        await self.web_boiler_client.data.notify_all_updated()
+        # refresh() already notified every updated parameter.
 
     async def async_turn_on(self, **kwargs) -> None:
         await self.turn_circuit_on_off(True)
