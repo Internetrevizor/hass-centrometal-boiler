@@ -22,11 +22,12 @@ import json
 import logging
 import time
 from json import JSONDecodeError
-from typing import Any, Awaitable, Callable, TypedDict
+from typing import Any, TypedDict
+from collections.abc import Awaitable, Callable
 
 from .const import WEB_BOILER_STOMP_DEVICE_TOPIC
 from .logging_utils import redact_account
-from .parameter_filters import is_ignored_peltec2_parameter
+from .parameter_filters import is_ignored_peltec2_parameter, is_session_parameter
 
 
 class DeviceLookupError(LookupError):
@@ -54,7 +55,7 @@ class WebBoilerDeviceFields(TypedDict, total=False):
     country: str
     countryCode: str
     city: str
-    parameters: dict[str, "WebBoilerParameter"]
+    parameters: dict[str, WebBoilerParameter]
     temperatures: dict[str, Any]
     errors: list[dict[str, Any]]
     circuits: dict[str, Any]
@@ -75,7 +76,7 @@ def _normalize_timestamp(timestamp: Any) -> int:
     try:
         parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            parsed = parsed.replace(tzinfo=datetime.UTC)
         return int(parsed.timestamp())
     except ValueError:
         pass
@@ -83,7 +84,7 @@ def _normalize_timestamp(timestamp: Any) -> int:
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
         try:
             parsed = datetime.datetime.strptime(value, fmt)
-            return int(parsed.replace(tzinfo=datetime.timezone.utc).timestamp())
+            return int(parsed.replace(tzinfo=datetime.UTC).timestamp())
         except ValueError:
             continue
 
@@ -264,7 +265,10 @@ class WebBoilerDeviceCollection(dict):
         for device in installations:
             serial = device["label"]
             self.logger.info("Creating device %s (%s)", serial, self.log_account)
-            new_device = WebBoilerDevice(self.log_account)
+            # The username, not self.log_account: WebBoilerDevice hashes what
+            # it is given, so passing the hash produced a second, different
+            # account id in device-level log lines.
+            new_device = WebBoilerDevice(self.username)
             new_device["id"] = device["value"]
             new_device["serial"] = device["label"]
             new_device["place"] = device["place"]
@@ -282,9 +286,35 @@ class WebBoilerDeviceCollection(dict):
                     device["countryCode"] = data["countryCode"]
                 elif group == "params":
                     for param_id, param_data in data.items():
+                        if is_session_parameter(param_id):
+                            continue
                         if device.get("type") == "peltec2" and is_ignored_peltec2_parameter(param_id):
                             continue
-                        parameter = await device.update_parameter(param_id, param_data.get("v"), param_data.get("ut"))
+                        value = param_data.get("v")
+                        existing = device["parameters"].get(param_id)
+                        if existing is not None and existing.get("value") == value:
+                            # The snapshot repeats every parameter on every
+                            # poll whether or not it moved; measured on a
+                            # PelTec II Lambda, 73% of them had not.
+                            #
+                            # The portal's own "ut" is not a reliable way to
+                            # tell: for a settings slot it is the time the
+                            # setting was last changed (PVAL_67_0 held
+                            # 2026-09-25 15:09:07 across eight polls), but for
+                            # live telemetry it is simply the time of the poll
+                            # -- B_KONF, a configuration value that cannot
+                            # change, had its "ut" bumped by exactly the poll
+                            # interval eight times running. Trusting it would
+                            # have written a state for every parameter anyway,
+                            # and made "Last updated" read as the poll time on
+                            # every entity, which is the same number
+                            # everywhere and says nothing.
+                            #
+                            # Skipping on the value alone gives every
+                            # parameter the settings-slot semantics: "Last
+                            # updated" is when the reading actually changed.
+                            continue
+                        parameter = await device.update_parameter(param_id, value, param_data.get("ut"))
                         # Without this, an HTTP refresh updated the cache
                         # but HA entities did not re-render until the next
                         # websocket message arrived. Fire the same callback
@@ -299,7 +329,15 @@ class WebBoilerDeviceCollection(dict):
                     )
 
     def parse_parameter_lists(self, parameter_list: dict[str, Any]) -> list[WebBoilerParameter]:
-        updated_metadata: list[WebBoilerParameter] = []
+        """Refresh per-device metadata and return the parameters it describes.
+
+        The returned parameters are the ones whose *entity presentation*
+        (display name, Default/Minimum/Maximum attributes) is derived from this
+        response, so the caller can notify them and have Home Assistant
+        re-render. Previously this always returned an empty list, which made
+        the hourly metadata refresh invisible to the entities it was for.
+        """
+        updated: dict[str, WebBoilerParameter] = {}
         for serial, device_data in parameter_list.items():
             device = self.get_device_by_serial(serial)
             for data_id, data_value in device_data.items():
@@ -312,6 +350,7 @@ class WebBoilerDeviceCollection(dict):
                             for list_item in data_value_item["list"]:
                                 index = list_item["dbindex"]
                                 device["temperatures"][index] = list_item
+                                self._collect_slot_parameters(device, index, updated)
                         elif group == "Info":
                             # Static portal display metadata is not used to
                             # create entities; do not retain it.
@@ -323,6 +362,7 @@ class WebBoilerDeviceCollection(dict):
                             for list_item in data_value_item["list"]:
                                 index = list_item["naslov"]
                                 device["circuits"][index] = list_item
+                                self._collect_slot_parameters(device, list_item.get("dbindex"), updated)
                         else:
                             self.logger.warning(
                                 "Unknown group in parameter_list group:%s (%s) - skipping",
@@ -335,7 +375,28 @@ class WebBoilerDeviceCollection(dict):
                         data_id,
                         self.log_account,
                     )
-        return updated_metadata
+        return list(updated.values())
+
+    @staticmethod
+    def _collect_slot_parameters(
+        device: WebBoilerDevice,
+        dbindex: Any,
+        collected: dict[str, WebBoilerParameter],
+    ) -> None:
+        """Collect the existing PVAL/PDEF/PMIN/PMAX parameters of one slot.
+
+        Only parameters the device already has are collected — this must never
+        create one, or a metadata row for a slot the controller does not report
+        would conjure an empty parameter into the cache.
+        """
+        if dbindex is None:
+            return
+        parameters = device["parameters"]
+        for family in ("PVAL", "PDEF", "PMIN", "PMAX"):
+            name = f"{family}_{dbindex}_0"
+            parameter = parameters.get(name)
+            if parameter is not None:
+                collected[name] = parameter
 
     def parse_errors_lists(self, errors_lists: dict[str, Any]) -> list[WebBoilerParameter]:
         updated_metadata: list[WebBoilerParameter] = []
@@ -371,7 +432,16 @@ class WebBoilerDeviceCollection(dict):
             )
             return
         for param_id, value in data.items():
+            if is_session_parameter(param_id):
+                continue
             if device.get("type") == "peltec2" and is_ignored_peltec2_parameter(param_id):
+                continue
+            existing = device["parameters"].get(param_id)
+            if existing is not None and existing.get("value") == value:
+                # Same rule as the HTTP snapshot, so "Last updated" means the
+                # same thing whichever path delivered the reading. The
+                # controller sends almost only genuine changes here, so this
+                # skips little -- it exists for consistency, not for volume.
                 continue
             parameter = await device.update_parameter(param_id, value)
             for on_update_callback in list(self.on_update_callbacks.values()):

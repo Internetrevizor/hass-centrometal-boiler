@@ -12,7 +12,7 @@ def test_manifest_has_required_custom_integration_keys() -> None:
         assert key in manifest
 
     assert manifest["domain"] == "centrometal_boiler"
-    assert manifest["version"] == "0.2.0.11"
+    assert manifest["version"] == "0.2.0.20"
 
 
 def test_hacs_metadata_exists() -> None:

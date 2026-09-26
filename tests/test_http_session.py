@@ -146,7 +146,7 @@ def test_close_session_waits_for_the_same_lock_as_session_creation() -> None:
         try:
             await asyncio.wait_for(asyncio.shield(close_task), timeout=0.05)
             blocked_on_lock = False
-        except asyncio.TimeoutError:
+        except TimeoutError:
             blocked_on_lock = True
         assert blocked_on_lock, "close_session() completed while the lock was held -- it isn't actually using it"
         assert client.http_session is not None  # not yet cleared

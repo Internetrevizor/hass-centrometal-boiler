@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import logging
-from typing import List, Dict, Any
+from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.const import UnitOfPower, UnitOfTime, PERCENTAGE
 from homeassistant.core import HomeAssistant
 
-from ..common import format_name, format_time, create_device_info
+from ..common import create_device_info, display_value, format_name, format_time
 
 from .generic_sensors_all import GENERIC_SENSORS_COMMON, get_generic_temperature_settings_sensors
 from .generic_sensors_peltec import PELTEC2_GENERIC_SENSORS, PELTEC_GENERIC_SENSORS
@@ -66,8 +68,19 @@ class WebBoilerGenericSensor(SensorEntity):
 
         self.parameter["used"] = True
         for attr_param_name in self._attributes_map:
-            attr_param = self.device.get_parameter(attr_param_name)
-            attr_param["used"] = True
+            attr_param = self.device.get("parameters", {}).get(attr_param_name)
+            if attr_param is not None:
+                attr_param["used"] = True
+
+    def _parameter_value(self, name: str) -> Any:
+        """Read another parameter's value without creating a placeholder.
+
+        device.get_parameter() creates the parameter when it is missing, which
+        is a cache mutation — not something a property may do while Home
+        Assistant is reading entity state.
+        """
+        parameter = self.device.get("parameters", {}).get(name)
+        return parameter.get("value") if parameter is not None else None
 
     async def async_will_remove_from_hass(self) -> None:
         if hasattr(self.parameter, "set_update_callback"):
@@ -134,8 +147,11 @@ class WebBoilerGenericSensor(SensorEntity):
     def state_class(self) -> str | None:
         # Set temperatures are configuration targets, not measurements. Keep
         # their Celsius device class and unit conversion, but do not generate
-        # long-term min/max/mean statistics for them.
-        if self.device.get("type") == "peltec2" and self._param_name.endswith(("_Tpol", "_Tsob")):
+        # long-term min/max/mean statistics for them. Applies to every family:
+        # K1B_Tpol means the same thing on a PelTec as on a PelTec II. Note the
+        # measured counterparts (_Tpol1/_Tsob1) do not match this suffix test
+        # and keep their statistics.
+        if self._param_name.endswith(("_Tpol", "_Tsob", "_kor", "_korN")):
             return None
         # RSSI is diagnostic and changes unit from the erroneous percentage
         # mapping used in 0.2.0.10. Do not create long-term statistics for it,
@@ -192,7 +208,7 @@ class WebBoilerGenericSensor(SensorEntity):
                 return 1
             if self._param_name in {"B_Oxy1", "B_misP"}:
                 return 1
-            if self._param_name in {"B_signal", "B_cm2k", "B_razP", "B_FotV", "B_fan", "B_sng"}:
+            if self._param_name in {"B_signal", "B_cm2k", "B_razP", "B_FotV", "B_fan", "B_sng", "PVAL_582_0"}:
                 return 0
 
         # Any other sensor with a state class or a real unit is a plain
@@ -241,6 +257,7 @@ class WebBoilerGenericSensor(SensorEntity):
         "B_zahK1_K2",
         "B_zahValve",
         "B_PTV_PRI",
+        "B_pres",  # safety pressure switch: 1 while healthy
     }
 
     # Valve states
@@ -263,11 +280,14 @@ class WebBoilerGenericSensor(SensorEntity):
             return valid_nonnegative_measurement(value, maximum=10000)
         if self.device.get("type") == "peltec2" and self._param_name == "B_sng":
             return valid_nonnegative_measurement(value, maximum=1000)
+        if self.device.get("type") == "peltec2" and self._param_name == "PVAL_582_0":
+            # Hours. No portal Minimum/Maximum exists for this slot, so the
+            # bound is only wide enough to reject a sentinel or a corrupt read.
+            return valid_nonnegative_measurement(value, maximum=10000)
         if self.device.get("type") == "peltec2" and self._param_name == "B_specG":
             return decode_status_mark(value)
         if self.device.get("type") == "peltec2" and self._param_name == "B_start":
-            state = self.device.get_parameter("B_STATE").get("value")
-            return decode_start_transition(value, state)
+            return decode_start_transition(value, self._parameter_value("B_STATE"))
         if self.device.get("type") == "peltec2" and self._param_name in {
             "B_PTV_PRI",
             "B_bup",
@@ -331,13 +351,12 @@ class WebBoilerGenericSensor(SensorEntity):
                 return False
             if not self.device.has_parameter("B_addConf"):
                 return False
-            enabled = portal_hex_bit_is_set(self.device.get_parameter("B_addConf").get("value"), 3)
-            return enabled is True
+            return portal_hex_bit_is_set(self._parameter_value("B_addConf"), 3) is True
         return True
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
-        attrs: Dict[str, Any] = {}
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {}
         if "timestamp" in self.parameter:
             try:
                 attrs["Last updated"] = format_time(self.hass, int(self.parameter["timestamp"]))
@@ -345,7 +364,7 @@ class WebBoilerGenericSensor(SensorEntity):
                 pass
         attrs["Original name"] = self.parameter["name"]
         if self.device.get("type") == "peltec2" and self._param_name == "B_start":
-            attrs["Boiler state"] = self.device.get_parameter("B_STATE").get("value")
+            attrs["Boiler state"] = self._parameter_value("B_STATE")
         if self.device.get("type") == "peltec2" and self._param_name == "B_specG":
             details = decode_status_mark_details(self.parameter.get("value"))
             attrs["Raw value"] = details["raw_value"]
@@ -355,16 +374,8 @@ class WebBoilerGenericSensor(SensorEntity):
             attrs["Documentation"] = details["documentation"]
         if self.device.get("type") == "peltec2" and self._param_name == "B_Oxy1":
             numeric = valid_lambda(self.parameter.get("value"))
-            state = (
-                self.device.get_parameter("B_STATE").get("value")
-                if self.device.has_parameter("B_STATE")
-                else None
-            )
-            flame_raw = (
-                self.device.get_parameter("B_fireS").get("value")
-                if self.device.has_parameter("B_fireS")
-                else None
-            )
+            state = self._parameter_value("B_STATE")
+            flame_raw = self._parameter_value("B_fireS")
             try:
                 flame_detected = int(str(flame_raw)) != 0
             except (TypeError, ValueError):
@@ -401,8 +412,7 @@ class WebBoilerGenericSensor(SensorEntity):
         }:
             attrs["Raw value"] = self.parameter.get("value")
         for key_param_name, nice_label in self._attributes_map.items():
-            p = self.device.get_parameter(key_param_name)
-            attrs[nice_label] = p["value"] or "None"
+            attrs[nice_label] = display_value(self._parameter_value(key_param_name))
         return attrs
 
     @property
@@ -415,12 +425,12 @@ class WebBoilerGenericSensor(SensorEntity):
         return param_name in params
 
     @staticmethod
-    def create_common_entities(hass: HomeAssistant, device) -> List[SensorEntity]:
+    def create_common_entities(hass: HomeAssistant, device) -> list[SensorEntity]:
         # PelTec II exposes only the three portal-visible information fields.
         # Brand, installation type and Wi-Fi box version are internal or
         # duplicate metadata and are not created as entities.
         allowed_peltec2 = {"B_PRODNAME", "B_VER", "B_sng"}
-        entities: List[SensorEntity] = []
+        entities: list[SensorEntity] = []
         for param_id, sensor_data in GENERIC_SENSORS_COMMON.items():
             if param_id == "B_CMD":
                 continue
@@ -435,8 +445,8 @@ class WebBoilerGenericSensor(SensorEntity):
         return entities
 
     @staticmethod
-    def create_temperatures_entities(hass: HomeAssistant, device) -> List[SensorEntity]:
-        entities: List[SensorEntity] = []
+    def create_temperatures_entities(hass: HomeAssistant, device) -> list[SensorEntity]:
+        entities: list[SensorEntity] = []
         temp_sensors = get_generic_temperature_settings_sensors(device)
         for param_id, sensor_data in temp_sensors.items():
             if not WebBoilerGenericSensor._device_has_parameter(device, param_id):
@@ -448,8 +458,26 @@ class WebBoilerGenericSensor(SensorEntity):
         return entities
 
     @staticmethod
-    def create_conf_entities(hass: HomeAssistant, device) -> List[SensorEntity]:
-        entities: List[SensorEntity] = []
+    def generic_map_for_device(device) -> dict[str, list]:
+        """Return the parameter table this build would use for the device.
+
+        Separate from create_conf_entities() so the registry cleanup can ask
+        "could this build ever create an entity for that parameter?" without
+        depending on whether the controller happens to be reporting it right
+        now.
+        """
+        return {
+            "peltec2": PELTEC2_GENERIC_SENSORS,
+            "peltec": PELTEC_GENERIC_SENSORS,
+            "compact": COMPACT_GENERIC_SENSORS,
+            "cmpelet": CM_PELET_SET_GENERIC_SENSORS,
+            "biotec": BIOTEC_GENERIC_SENSORS,
+            "biopl": BIOTEC_PLUS_GENERIC_SENSORS,
+        }.get(device.get("type"), {})
+
+    @staticmethod
+    def create_conf_entities(hass: HomeAssistant, device) -> list[SensorEntity]:
+        entities: list[SensorEntity] = []
 
         if device["type"] == "peltec2":
             # Keep the Lambda entity present even when the controller omits the
@@ -476,6 +504,9 @@ class WebBoilerGenericSensor(SensorEntity):
         elif device["type"] == "peltec":
             generic_map = PELTEC_GENERIC_SENSORS
             skip_params = {
+                # Settings-slot numbering is controller-specific; 582 is only
+                # confirmed as the pump anti-blocking interval on PelTec II.
+                "PVAL_582_0",
                 "B_CMD",
                 "K1B_onOff",
                 "K1B_P",
@@ -509,6 +540,14 @@ class WebBoilerGenericSensor(SensorEntity):
 
         for param_id, sensor_data in generic_map.items():
             if param_id in skip_params:
+                continue
+            if device.get("type") == "peltec2" and param_id == "B_P1" and device.has_parameter("K1B_P"):
+                # P1 is the K1 circuit's pump in this configuration: across a
+                # capture of seven switching cycles, B_P1, B_Pk1_k2 and K1B_P
+                # changed in the same millisecond every time. "K1 Circuit Pump"
+                # already reports it, so a second entity would only duplicate
+                # it. Configurations without a K1 circuit still get B_P1, where
+                # the manual has it drive a diverter valve instead.
                 continue
             if device.get("type") == "peltec2" and param_id == "B_razP":
                 if not device.has_parameter("B_addConf"):
@@ -555,10 +594,10 @@ class WebBoilerGenericSensor(SensorEntity):
     }
 
     @staticmethod
-    def create_unknown_entities(hass: HomeAssistant, device) -> List[SensorEntity]:
+    def create_unknown_entities(hass: HomeAssistant, device) -> list[SensorEntity]:
         if device.get("type") == "peltec2":
             return []
-        entities: List[SensorEntity] = []
+        entities: list[SensorEntity] = []
         for param_name, parameter in device.get("parameters", {}).items():
             if parameter.get("used"):
                 continue

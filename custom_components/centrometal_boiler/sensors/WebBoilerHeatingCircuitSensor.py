@@ -35,6 +35,33 @@ class WebBoilerHeatingCircuitDayNightSensor(WebBoilerGenericSensor):
 
 _LOGGER = logging.getLogger(__name__)
 
+# Every circuit parameter this build knows how to expose, across all four
+# C and K circuits. Used by the registry cleanup to tell a parameter the
+# integration dropped from one the controller merely did not send.
+CIRCUIT_PARAMETER_SUFFIXES = (
+    "_CircType",
+    "_dayNight",
+    "_kor",
+    "_korN",
+    "_korType",
+    "_misC",
+    "_misO",
+    "_onOff",
+    "_P",
+    "_Prec",
+    "_Tpol",
+    "_Tpol1",
+    "_Tsob",
+    "_Tsob1",
+    "_zahP",
+)
+CIRCUIT_PARAMETER_NAMES = frozenset(
+    f"{prefix}{index}B{suffix}"
+    for prefix in ("C", "K")
+    for index in range(1, 5)
+    for suffix in CIRCUIT_PARAMETER_SUFFIXES
+)
+
 
 class WebBoilerHeatingCircuitSensor:
     @staticmethod
@@ -113,8 +140,27 @@ class WebBoilerHeatingCircuitSensor:
         }
         # Portal-confirmed PelTec II fields. Other circuit telemetry is not
         # created at all; exposing raw or guessed values only clutters the
-        # device and can mislead users.
-        confirmed_peltec2_suffixes = {"_onOff", "_P", "_Tpol", "_Tpol1", "_Tsob", "_Tsob1", "_zahP"}
+        # device and can mislead users. The second group was confirmed
+        # against the portal's K1 circuit page on a PelTec II Lambda; the
+        # _recSrc/_recType fields stay out because they have no confirmed
+        # meaning (and no entry in the table above).
+        confirmed_peltec2_suffixes = {
+            "_onOff",
+            "_P",
+            "_Tpol",
+            "_Tpol1",
+            "_Tsob",
+            "_Tsob1",
+            "_zahP",
+            "_CircType",
+            "_Prec",
+            "_dayNight",
+            "_kor",
+            "_korN",
+            "_korType",
+            "_misC",
+            "_misO",
+        }
         binary_suffixes = {"_onOff", "_P", "_zahP", "_misC", "_misO"}
         daynight_suffixes = {"_dayNight"}
 

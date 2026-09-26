@@ -10,24 +10,22 @@ permissions:
 jobs:
   python:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v5
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
-
-      - name: Install test dependencies
+      - name: Install validation tools
+        # homeassistant is required: ten of the tests import the integration
+        # package, which imports Home Assistant. Without it pytest cannot
+        # collect them and the job passes while the orchestration, entity
+        # and registry tests never run.
         run: |
           python -m pip install --upgrade pip
           python -m pip install homeassistant aiohttp pytest pytest-asyncio ruff "websockets>=13.1" "certifi>=2024.7.4" voluptuous
-
       - name: Compile Python files
         run: python -m compileall custom_components tests
-
       - name: Ruff critical checks
         run: ruff check .
-
       - name: Run tests
-        run: pytest -q
+        run: pytest

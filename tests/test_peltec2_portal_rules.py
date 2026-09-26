@@ -37,9 +37,9 @@ def test_portal_enums() -> None:
     assert details["code"] == "G"
     assert details["temporary_shutdown"] is True
     assert "grate cleaning" in details["meaning"]
-    assert peltec2.decode_start_transition("0", "OFF") == "Idle"
-    assert peltec2.decode_start_transition("1", "S1") == "Starting"
-    assert peltec2.decode_start_transition("2", "S9") == "Stopping"
+    assert peltec2.decode_start_transition("0", "OFF") == "Stopped"
+    assert peltec2.decode_start_transition("2", "S7-1") == "Stopping"
+    assert peltec2.decode_start_transition("3", "C0") == "Cleaning"
     assert peltec2.decode_start_transition("1", "S7-3") == "Paused / standby"
     assert peltec2.decode_tank_level("2") == "Full"
 
@@ -107,3 +107,56 @@ def test_configuration_component_helpers() -> None:
     assert peltec2.configuration_has_buffer(4) is True
     assert peltec2.configuration_has_dhw(12) is False
     assert peltec2.configuration_has_buffer(12) is False
+
+
+def test_percentage_rejects_non_finite_values() -> None:
+    """NaN compares False against both bounds, so the range check alone let it
+    through and Home Assistant received a NaN as a real percentage."""
+    assert peltec2.valid_percentage(float("nan")) is None
+    assert peltec2.valid_percentage("nan") is None
+    assert peltec2.valid_percentage(float("inf")) is None
+    assert peltec2.valid_percentage("-inf") is None
+    assert peltec2.valid_percentage(0) == 0
+    assert peltec2.valid_percentage("42,5") == 42.5
+    assert peltec2.valid_percentage(100) == 100
+    assert peltec2.valid_percentage(101) is None
+
+
+def test_scheme_43_has_both_a_buffer_and_a_dhw_tank() -> None:
+    """B_KONF 42 is the portal's scheme 43.
+
+    Confirmed against a PelTec II Lambda capture: the portal drawing shows a
+    buffer with both sensors reporting and a DHW tank. The gate used to treat
+    every configuration outside the fifteen PelTec schemes as having neither,
+    which hid four entities the controller was reporting.
+    """
+    assert peltec2.configuration_has_buffer("42") is True
+    assert peltec2.configuration_has_dhw("42") is True
+    # Unknown schemes are still gated off; membership has to be confirmed.
+    assert peltec2.configuration_has_buffer("41") is False
+    assert peltec2.configuration_has_dhw("41") is False
+    # The known PelTec table is untouched.
+    assert peltec2.configuration_has_buffer("12") is False
+    assert peltec2.configuration_has_dhw("12") is False
+
+
+def test_burner_command_stays_running_while_the_boiler_burns() -> None:
+    """B_start is the commanded state, not a momentary transition.
+
+    In a v3.03dL capture it read 1 across S0, S2, S3, S4 and SP1 (ignition)
+    and across D4, D5 and D6 (modulating), so labelling 1 as "Starting" told
+    the owner the boiler was starting while it had been burning for an hour.
+    """
+    for ignition in ("S0", "S2", "S3", "S4", "SP1"):
+        assert peltec2.decode_start_transition("1", ignition) == "Running"
+    for burning in ("D4", "D5", "D6"):
+        assert peltec2.decode_start_transition("1", burning) == "Running"
+    # The shutdown sequence and the cleaning phase keep their own labels.
+    for stopping in ("S7-1", "S7-2"):
+        assert peltec2.decode_start_transition("2", stopping) == "Stopping"
+    assert peltec2.decode_start_transition("3", "C0") == "Cleaning"
+    assert peltec2.decode_start_transition("0", "OFF") == "Stopped"
+    # S7-3 is a standby pause and still overrides the value.
+    assert peltec2.decode_start_transition("1", "S7-3") == "Paused / standby"
+    # An unknown value is still reported honestly rather than guessed.
+    assert peltec2.decode_start_transition("9", "D4") == "Unknown (9)"

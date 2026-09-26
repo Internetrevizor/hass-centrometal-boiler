@@ -226,3 +226,26 @@ def test_no_text_returning_parameter_has_a_unit_or_temperature_class_in_any_tabl
                 "Home Assistant's numeric-state validation"
             )
     assert checked > 0  # sanity check that this actually exercised something
+
+
+def test_setpoints_are_excluded_from_statistics_on_older_families_too() -> None:
+    """K1B_Tpol means "flow target" on a PelTec just as it does on a PelTec II.
+
+    The exclusion used to be conditional on the device type, so the same
+    setpoint generated long-term min/max/mean statistics on one family and not
+    on the other.
+    """
+    device = _make_device()
+    device["type"] = "peltec"
+    device["product"] = "PelTec"
+    device.create_parameter("K1B_Tpol", 50)
+    device.create_parameter("K1B_Tpol1", 48)
+    sensor_data = ["°C", "mdi:thermometer", "temperature", "K1 Flow Target Temperature"]
+    measured_data = ["°C", "mdi:thermometer", "temperature", "K1 Flow Measured Temperature"]
+
+    setpoint = WebBoilerGenericSensor(_FAKE_HASS, device, sensor_data, device.get_parameter("K1B_Tpol"))
+    measured = WebBoilerGenericSensor(_FAKE_HASS, device, measured_data, device.get_parameter("K1B_Tpol1"))
+
+    assert setpoint.state_class is None
+    # The measured value is a real measurement and keeps its statistics.
+    assert measured.state_class is not None

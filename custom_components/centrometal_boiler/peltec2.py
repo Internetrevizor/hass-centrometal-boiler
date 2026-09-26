@@ -13,6 +13,34 @@ from typing import Any
 
 from .centrometal_web_boiler.parameter_filters import is_ignored_peltec2_parameter
 
+__all__ = [
+    "BUFFER_CONFIGURATIONS",
+    "DHW_CONFIGURATIONS",
+    "INTERNET_ACCESS",
+    "START_TRANSITIONS",
+    "STATUS_MARKS",
+    "STATUS_MARK_DETAILS",
+    "TANK_LEVELS",
+    "configuration_has_buffer",
+    "configuration_has_dhw",
+    "decode_accessory_bitmask",
+    "decode_input_bitmask",
+    "decode_internet_access",
+    "decode_start_transition",
+    "decode_status_mark",
+    "decode_status_mark_details",
+    "decode_tank_level",
+    "format_portal_hex",
+    "is_ignored_peltec2_parameter",
+    "parse_portal_hex",
+    "portal_hex_bit_is_set",
+    "valid_lambda",
+    "valid_nonnegative_measurement",
+    "valid_percentage",
+    "valid_signal_db",
+    "valid_temperature",
+]
+
 
 INTERNET_ACCESS = {
     1: "Supervision",
@@ -67,10 +95,29 @@ STATUS_MARK_DETAILS = {
     },
 }
 
+# B_start is the burner's commanded state, not a momentary transition. Every
+# value below was read against B_STATE in a PelTec II Lambda capture
+# (2026-09-26, v3.03dL):
+#
+#   0  B_STATE OFF
+#   1  S0, S2, S3, S4, SP1 (ignition) and D4, D5, D6 (modulating) -- so it
+#      stays 1 for the whole time the burner is lit, which is why "Starting"
+#      was wrong: the boiler reported it while burning steadily
+#   2  S7-1, S7-2, the shutdown sequence
+#   3  C0, the cleaning phase. B_specG went to 4 ("shutdown because burner
+#      grate cleaning is required") in the same millisecond as B_start = 2;
+#      B_start became 3 fifteen seconds into C0 and returned to 1 in the same
+#      millisecond as B_specG returning to 0. Labelled for the phase rather
+#      than for the grate, since the same value presumably covers the
+#      controller's other cleaning cycles.
+#
+# The detailed phase is the "Operation State" entity's job (B_STATE); this one
+# answers whether the burner is meant to be running.
 START_TRANSITIONS = {
-    0: "Idle",
-    1: "Starting",
+    0: "Stopped",
+    1: "Running",
     2: "Stopping",
+    3: "Cleaning",
 }
 
 TANK_LEVELS = {
@@ -81,9 +128,20 @@ TANK_LEVELS = {
 
 # Zero-based B_KONF values from the controller configuration list. Optional
 # DHW/buffer telemetry is meaningful only in configurations that contain the
-# corresponding hydraulic component.
-DHW_CONFIGURATIONS = frozenset({0, 2, 4, 6, 7, 8, 11, 14})
-BUFFER_CONFIGURATIONS = frozenset({3, 4, 5, 6, 7, 8, 10, 13})
+# corresponding hydraulic component. The portal numbers the same schemes
+# 1-based, so B_KONF 42 is the portal's scheme 43.
+#
+# The controller reports B_bup/B_PTV_PRI/B_REC/B_REO in every configuration,
+# including ones with no buffer and no DHW tank, so their presence in a
+# snapshot proves nothing. Membership below has to come from the scheme
+# itself, confirmed against the portal's hydraulic drawing.
+#
+# 42 (portal 43): confirmed from a PelTec II Lambda v3.03dL capture -- the
+# drawing shows a buffer with both sensors reporting (B_Tak1_1, B_Tak2_1) and
+# a DHW tank whose own sensor is not installed (the portal renders "-°C" and
+# no B_Tptv* parameter is reported at all).
+DHW_CONFIGURATIONS = frozenset({0, 2, 4, 6, 7, 8, 11, 14, 42})
+BUFFER_CONFIGURATIONS = frozenset({3, 4, 5, 6, 7, 8, 10, 13, 42})
 
 
 def _as_int(value: Any, *, base: int = 10) -> int | None:
@@ -283,8 +341,14 @@ def valid_signal_db(value: Any) -> float | None:
 
 
 def valid_percentage(value: Any) -> float | None:
+    """Return a 0-100 percentage, or ``None`` when the portal value is not one.
+
+    The ``isfinite`` check is not redundant with the range check: NaN compares
+    False against both bounds, so without it a NaN would be handed to Home
+    Assistant as a real reading.
+    """
     numeric = _as_float(value)
-    if numeric is None or numeric < 0 or numeric > 100:
+    if numeric is None or not isfinite(numeric) or numeric < 0 or numeric > 100:
         return None
     return numeric
 
