@@ -68,6 +68,20 @@ Examples of internal-only values include `B_addConf`, `B_Inp1`, and `B_cm2k`. `B
 
 Editable controller settings (`PVAL_*` rows the account may change) are `number` entities, bounded by the controller's own `PMIN`/`PMAX`; read-only rows stay sensors. Fan speed (`B_fan`, `B_fanB`, `B_fanO`, `B_rpm`) is not exposed: the controller does not publish it to the portal, so the entity could only show a frozen zero.
 
+## Other families
+
+Older PelTec, Compact, CM Pelet-set, BioTec and BioTec Plus keep the mappings inherited from the original project (untested by the maintainer). A BioTec-Plus additionally gets:
+
+| Parameter | Home Assistant entity | Rule |
+|---|---|---|
+| `B_razina` | Tank Level | `0` Empty, `1` Reserve, `2` Full; unavailable until first reported |
+| `B_razP` | Fuel Level | `0–100%`; unavailable until first reported or when outside the range |
+| — | Pellet Mode (button) | sends `SCCMD = 1`: wood to pellets; there is no command back to wood |
+
+## Entity names
+
+Names are `<product> <entity>` ("PelTec II Lambda Boiler Temperature"). With **Prefix entity names with the product name** switched off in the options they are `<entity>` alone. The optional entity-name prefix from setup and, on accounts with several boilers, the serial number still come first. Entity IDs do not change with either setting.
+
 ## Hydraulic configuration
 
 `B_KONF` selects one of the 45 PelTec II schemes in chapter 4.2.2 of the boiler book; the portal and the controller screen show the same number plus one. The scheme decides which optional entities exist:

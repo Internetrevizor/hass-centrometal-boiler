@@ -19,9 +19,11 @@ from .centrometal_web_boiler import (
     redact_account,
 )
 from .const import (
+    CONF_PRODUCT_PREFIX,
     CONF_REFRESH_INTERVAL,
     CONF_RETRY_BASE_INTERVAL,
     CONF_RETRY_MAX_INTERVAL,
+    DEFAULT_PRODUCT_PREFIX,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_RETRY_BASE_INTERVAL,
     DEFAULT_RETRY_MAX_INTERVAL,
@@ -44,7 +46,13 @@ except ImportError:  # pragma: no cover - depends on the running core version
     _LOGGER.debug("homeassistant.util.ssl.get_default_context unavailable; using the bundled CA store")
 
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.NUMBER]
+PLATFORMS: list[Platform] = [
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.BINARY_SENSOR,
+    Platform.NUMBER,
+    Platform.BUTTON,
+]
 CentrometalConfigEntry = ConfigEntry[CentrometalRuntimeData]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -121,6 +129,11 @@ class WebBoilerSystem:
         self._log_account = redact_account(username)
         prefix = prefix.rstrip()
         self.prefix = (prefix + " ") if prefix else ""
+        # The option wins; an entry migrated from the original integration may
+        # carry the same key in its data instead.
+        self.product_prefix = bool(
+            entry.options.get(CONF_PRODUCT_PREFIX, entry.data.get(CONF_PRODUCT_PREFIX, DEFAULT_PRODUCT_PREFIX))
+        )
         self.web_boiler_client = WebBoilerClient(hass, ssl_context_factory=_ha_ssl_context_factory)
         # Entities must not go unavailable between two scheduled refreshes, so
         # the window follows the configured interval instead of a fixed 300 s
@@ -158,6 +171,7 @@ class WebBoilerSystem:
             device["__client"] = self.web_boiler_client
             device["__system"] = self
             device["__prefix"] = self.prefix
+            device["__product_prefix"] = self.product_prefix
             device["__multi_device"] = multi
 
     async def start(self) -> None:

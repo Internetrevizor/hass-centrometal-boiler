@@ -1,12 +1,12 @@
 # Centrometal Boiler System for Home Assistant
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 
 A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box.
 
-## PelTec II behavior in 1.0.0
+## PelTec II behavior in 1.1.0
 
 PelTec II entities are created from a strict allowlist verified against an authenticated portal HTTP and WebSocket capture. Raw, hidden, duplicated, or unverified controller fields are not created as Home Assistant entities.
 
@@ -33,26 +33,58 @@ The Lambda Probe entity is created even when the controller omits the reading wh
 
 Older PelTec, Compact, CM Pelet-set, BioTec and BioTec Plus boilers keep the mappings inherited from the original project. They are still supported, but the maintainer has no such boiler and has not tested them; reports from owners are welcome.
 
+## BioTec-Plus
+
+Besides the inherited mappings, a BioTec-Plus (also sold as Morvan GMX EASY) gets:
+
+- **Tank Level** (`B_razina`: Empty / Reserve / Full) and **Fuel Level** (`B_razP`, %). The controller can report them only after setup; until it does, both entities are unavailable rather than showing a made-up value.
+- A **Pellet Mode** button that switches the boiler from wood to pellets. There is no remote command back to wood.
+
+Both come from the AndroFlo BioTec-Plus fork, where they were confirmed on a real boiler. They are not tested by the maintainer here.
+
 ## Installation
+
+Only one integration with the `centrometal_boiler` domain can be installed at a time. If you use the original integration (9a4gl) or another fork of it, remove that one first.
+
+### HACS (recommended)
+
+[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Internetrevizor&repository=hass-centrometal-boiler&category=integration)
+
+Or by hand:
+
+1. In Home Assistant, open **HACS**, then the **⋮** menu (top right) → **Custom repositories**.
+2. Repository: `https://github.com/Internetrevizor/hass-centrometal-boiler`, type: **Integration** → **Add**.
+3. Search for **Centrometal Boiler System** and **Download** it.
+4. Restart Home Assistant.
+5. Open **Settings → Devices & services → Add integration** and select **Centrometal Boiler System**.
 
 ### Manual installation
 
-1. Copy the `centrometal_boiler` folder into `config/custom_components/`.
-2. Remove or replace the existing `config/custom_components/centrometal_boiler` folder first.
-3. Restart Home Assistant.
-4. Open **Settings → Devices & services → Add integration** and select **Centrometal Boiler System**.
+1. Download the latest release from the [releases page](https://github.com/Internetrevizor/hass-centrometal-boiler/releases) (*Source code (zip)*).
+2. Remove the existing `config/custom_components/centrometal_boiler` folder, if there is one.
+3. Copy the `custom_components/centrometal_boiler` folder from the archive into `config/custom_components/`.
+4. Restart Home Assistant.
+5. Open **Settings → Devices & services → Add integration** and select **Centrometal Boiler System**.
+
+## Updating
+
+- **HACS:** open **HACS**, select **Centrometal Boiler System** and install the update (if it does not show yet, **⋮ → Update information**), then restart Home Assistant.
+- **Manual:** replace the `config/custom_components/centrometal_boiler` folder with the one from the new release, then restart Home Assistant.
+
+The integration's configuration, entities, entity IDs and history are kept; there is nothing to set up again. Read the [changelog](CHANGELOG.md) first: when a release changes a state text, automations comparing that text need the new one.
 
 On the first restart, obsolete sensor registry entries created by earlier builds are removed automatically. The cleanup is skipped for any boiler whose parameter snapshot looks incomplete, so an outage on the Centrometal side cannot delete working entities.
-
-### HACS custom repository
-
-Add the repository as a custom HACS integration, install it, and restart Home Assistant.
 
 ## Configuration
 
 Configuration is through the Home Assistant UI. Enter the Centrometal account e-mail, password, and optional entity-name prefix.
 
-The integration options only control HTTP refresh and reconnect timing. There are no schedule or weather switches.
+The integration options (**Configure**) control:
+
+- **Prefix entity names with the product name**: on by default ("PelTec II Lambda Boiler Temperature"); off gives "Boiler Temperature". Only the displayed names change; entity IDs stay the same. An entry carried over from the original integration with this switched off keeps it off.
+- HTTP refresh and reconnect timing.
+
+There are no schedule or weather switches. The setup and options screens are available in English, French and Romanian; entity names stay in English.
 
 ## "Last updated"
 
@@ -80,6 +112,8 @@ Under Home Assistant the integration reuses core's own shared SSL context, which
 ## Origin
 
 This integration began as a fork of [9a4gl/hass-centrometal-boiler](https://github.com/9a4gl/hass-centrometal-boiler) by Tihomir Heidelberg and contributors, released under the Apache License 2.0. Since 0.2.0 it has been substantially rewritten — portal client, PelTec II decoding, hydraulic schemes, editable settings and the test suite — and from 1.0.0 it is maintained as an independent project. See [NOTICE](NOTICE).
+
+Features carried over from other forks of the original project: the BioTec-Plus Pellet Mode button, tank level handling and the idea of testing against a fake Centrometal cloud from [AndroFlo/hass-centrometal-boiler](https://github.com/AndroFlo/hass-centrometal-boiler); the estimated pellet percentage from ULazdins; the product-name prefix option from TheCarpetMerchant and mgcd-jed.
 
 ## License
 
