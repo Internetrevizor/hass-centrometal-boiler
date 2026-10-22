@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 — independent release
+
+- The integration is now maintained as an independent project. It began as a fork of [9a4gl/hass-centrometal-boiler](https://github.com/9a4gl/hass-centrometal-boiler) by Tihomir Heidelberg and contributors (Apache License 2.0); the origin is credited in `README.md` and `NOTICE`.
+- Includes everything listed under 0.2.0.21, which was not released on its own. Coming from 0.2.0.20, the changes visible in Home Assistant are the ones in that section: the Boiler State texts, the Configuration entity and the pump relay names.
+- No entity, entity ID or state text changes compared with 0.2.0.21. The domain stays `centrometal_boiler`, so updating from any 0.2.0.x keeps every entity, its history and its automations.
+- Older PelTec, Compact, CM Pelet-set, BioTec and BioTec Plus support is kept unchanged and marked in the README as inherited and untested by the maintainer.
+
 ## 0.2.0.21 — operation stages, hydraulic schemes and pump names from the manuals
 
 Checked against *Technical instructions Controller PelTec II Lambda* (stage table, pages 96–97) and *Technical instructions PelTec II Lambda* (hydraulic schemes, chapter 4.2.2, pages 23–58). Entity IDs are unchanged throughout.

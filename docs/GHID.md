@@ -1,6 +1,8 @@
 # Ghidul integrării Centrometal Boiler System (PelTec II Lambda)
 
-Stare la 22.10.2026, versiunea **0.2.0.21** (pe branch-ul `claude/git-release-commit-f8oo83`).
+Stare la 22.10.2026, versiunea **1.0.0**: proiect independent, pornit ca fork al `9a4gl/hass-centrometal-boiler` (Tihomir Heidelberg, Apache 2.0, menționat în `README.md` și `NOTICE`).
+
+Acest ghid și `CLAUDE.md` sunt note interne: rămân în repo, dar sunt excluse din arhivele de release prin `.gitattributes`, iar HACS instalează oricum doar `custom_components/`.
 
 ## 1. Ce este
 
@@ -116,17 +118,19 @@ Ambele sunt publicate de Centrometal (centrometal.hr → descărcări), în engl
 
 ## 7. Cum se publică o versiune
 
-Regula proprietarului: **nu se face push în `main`**. Release-urile pleacă de pe branch-ul `claude/git-release-commit-f8oo83`.
+Regula proprietarului: **nu se face push direct în `main`**. Lucrul se face pe branch-ul `claude/git-release-commit-f8oo83`, intră în `main` printr-un pull request pe care îl aprobă proprietarul, iar release-urile pleacă din `main`.
 
 1. Pentru o versiune nouă se schimbă: `custom_components/centrometal_boiler/manifest.json` (`version`), badge-ul și titlul din `README.md`, `tests/test_repository_layout.py` (versiunea așteptată) și o secțiune nouă în `CHANGELOG.md`.
 2. Commit și push pe branch. CI-ul (Validate, Hassfest, HACS) rulează la fiecare push.
-3. Tag-ul nu poate fi urcat din sesiunile Claude (serverul respinge push-ul de tag-uri). Release-ul se creează din GitHub: Releases → Draft a new release → tag nou `vX.Y.Z.W` → **Target: `claude/git-release-commit-f8oo83`** → descrierea din CHANGELOG → Publish.
-4. În HA: HACS → Update information → instalare → repornire.
+3. Pull request din branch în `main`. Proprietarul îl verifică și face merge.
+4. Tag-ul nu poate fi urcat din sesiunile Claude (serverul respinge push-ul de tag-uri). Release-ul se creează din GitHub: Releases → Draft a new release → tag nou `vX.Y.Z` → **Target: `main`** → descrierea din CHANGELOG → Publish.
+5. În HA: HACS → Update information → instalare → repornire.
 
 Istoric:
 - **0.2.0.11**: release vechi din `main`.
 - **0.2.0.20**: importat din zip, PR-ul [Internetrevizor/hass-centrometal-boiler#1](https://github.com/Internetrevizor/hass-centrometal-boiler/pull/1) intrat în `main`, release publicat pe 26.09.2026.
-- **0.2.0.21**: doar pe branch (commit-urile `2c0575a` și `9c5bace`), CI verde. **Release-ul nu era încă publicat la 22.10.2026.**
+- **0.2.0.21**: doar pe branch (commit-urile `2c0575a` și `9c5bace`), nepublicat separat; intră în 1.0.0.
+- **1.0.0**: release independent (atribuire, `NOTICE`, fișierele interne excluse din release), fără schimbări de entități față de 0.2.0.21. Merge în `main` prin PR, apoi release din `main`.
 
 ## 8. Dezvoltare și teste
 
@@ -138,6 +142,6 @@ Istoric:
 ## 9. Subiecte deschise
 
 1. **`B_REO` („DHW Recirculation Pump”) față de P2**: pe PelTec II, pompa de recirculare e legată mereu la un releu P (manualul o trece pe P1–P4 în fiecare schemă cu recirculare), deci `B_REO` dublează probabil „P2 DHW Recirculation Pump (K1)”. Proprietarul înclina spre „doar pompele `B_P`, nu `B_RE`”. Modificarea a fost schițată (scoaterea `B_REO` din tabela PelTec II; PelTec-ul vechi îl păstrează; `B_REC` rămâne) și apoi oprită: **neaplicată, de discutat**.
-2. Publicarea release-ului v0.2.0.21 și verificarea pe HA-ul real: numele pompelor, entitatea Configuration, o ardere completă S0 → D → S7.
+2. Publicarea release-ului v1.0.0 și verificarea pe HA-ul real: numele pompelor, entitatea Configuration, o ardere completă S0 → D → S7.
 3. Actualizarea automatizărilor care compară textele vechi ale stărilor (tabelul de la punctul 4).
 4. Fixture-urile cu `B_KONF` 12, de origine necunoscută.

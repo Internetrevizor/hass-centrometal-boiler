@@ -1,0 +1,11 @@
+Centrometal Boiler System for Home Assistant
+Copyright 2026 Internetrevizor
+
+This project began as a fork of hass-centrometal-boiler
+(https://github.com/9a4gl/hass-centrometal-boiler),
+Portions Copyright 2022-2025 Tihomir Heidelberg and contributors,
+licensed under the Apache License, Version 2.0.
+
+It has since been substantially rewritten and, from version 1.0.0, is
+maintained as an independent project. It is not affiliated with
+Centrometal d.o.o.
