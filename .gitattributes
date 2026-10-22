@@ -1,0 +1,6 @@
+# Internal working notes: kept in the repository for the maintainer and for
+# Claude sessions, left out of every release archive (GitHub's "Source code"
+# downloads and `git archive`). HACS installs only custom_components/, so they
+# never reach Home Assistant either way.
+CLAUDE.md export-ignore
+docs/GHID.md export-ignore

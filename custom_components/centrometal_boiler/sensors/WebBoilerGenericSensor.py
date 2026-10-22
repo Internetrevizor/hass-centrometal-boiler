@@ -17,13 +17,16 @@ from .generic_sensors_biotec import BIOTEC_GENERIC_SENSORS
 from .generic_sensors_biotec_plus import BIOTEC_PLUS_GENERIC_SENSORS
 from ..peltec2 import (
     configuration_has_buffer,
-    configuration_has_dhw,
+    configuration_has_dhw_priority,
+    configuration_has_dhw_recirculation,
     decode_internet_access,
     decode_start_transition,
     decode_status_mark,
     decode_status_mark_details,
     decode_tank_level,
+    peltec2_scheme,
     portal_hex_bit_is_set,
+    relay_function,
     valid_lambda,
     valid_nonnegative_measurement,
     valid_percentage,
@@ -32,6 +35,13 @@ from ..peltec2 import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# The controller's pump relays. What each one drives depends on the hydraulic
+# configuration; peltec2.PELTEC2_SCHEMES has the manual's answer.
+_RELAY_PARAMETERS = {"B_P1": 1, "B_P2": 2, "B_P3": 3, "B_P4": 4}
+# Relay functions under which P1 is the K1 circuit's own pump, and therefore the
+# same device K1B_P reports.
+_K1_OWN_PUMP = {"K1 Circuit Pump", "DHW Pump (K1)"}
 
 
 class WebBoilerGenericSensor(SensorEntity):
@@ -411,6 +421,12 @@ class WebBoilerGenericSensor(SensorEntity):
             "B_REO",
         }:
             attrs["Raw value"] = self.parameter.get("value")
+        if self.device.get("type") == "peltec2" and self._param_name in _RELAY_PARAMETERS:
+            scheme = peltec2_scheme(self._parameter_value("B_KONF"))
+            if scheme is not None:
+                attrs["Function"] = scheme.relays.get(
+                    _RELAY_PARAMETERS[self._param_name], "Not used in this configuration"
+                )
         for key_param_name, nice_label in self._attributes_map.items():
             attrs[nice_label] = display_value(self._parameter_value(key_param_name))
         return attrs
@@ -541,14 +557,30 @@ class WebBoilerGenericSensor(SensorEntity):
         for param_id, sensor_data in generic_map.items():
             if param_id in skip_params:
                 continue
-            if device.get("type") == "peltec2" and param_id == "B_P1" and device.has_parameter("K1B_P"):
-                # P1 is the K1 circuit's pump in this configuration: across a
-                # capture of seven switching cycles, B_P1, B_Pk1_k2 and K1B_P
-                # changed in the same millisecond every time. "K1 Circuit Pump"
-                # already reports it, so a second entity would only duplicate
-                # it. Configurations without a K1 circuit still get B_P1, where
-                # the manual has it drive a diverter valve instead.
-                continue
+            if device.get("type") == "peltec2" and param_id in _RELAY_PARAMETERS:
+                configuration = (
+                    device.get_parameter("B_KONF").get("value") if device.has_parameter("B_KONF") else None
+                )
+                relay = _RELAY_PARAMETERS[param_id]
+                function = relay_function(configuration, relay)
+                known_scheme = peltec2_scheme(configuration) is not None
+                p1_is_k1_pump = function in _K1_OWN_PUMP or not known_scheme
+                if relay == 1 and p1_is_k1_pump and device.has_parameter("K1B_P"):
+                    # P1 is the K1 circuit's own pump in this configuration:
+                    # across a capture of seven switching cycles on scheme 43,
+                    # B_P1, B_Pk1_k2 and K1B_P changed in the same millisecond
+                    # every time. The K1 circuit entity already reports it, so
+                    # a second entity would only duplicate it. Where the
+                    # manual has P1 drive something else -- the buffer pump,
+                    # the K2 circuit, DHW recirculation -- it is its own device
+                    # and keeps its entity. A scheme the manual does not list
+                    # keeps the previous behaviour.
+                    continue
+                if function is not None:
+                    # Name the relay after what the manual says it drives in
+                    # this scheme; "P2 Pump" says nothing about which pump it is.
+                    icon = "mdi:valve" if function == "Diverter Valve" else sensor_data[1]
+                    sensor_data = [sensor_data[0], icon, sensor_data[2], f"P{relay} {function}"]
             if device.get("type") == "peltec2" and param_id == "B_razP":
                 if not device.has_parameter("B_addConf"):
                     continue
@@ -565,7 +597,9 @@ class WebBoilerGenericSensor(SensorEntity):
                 configuration = device.get_parameter("B_KONF").get("value")
                 if param_id == "B_bup" and not configuration_has_buffer(configuration):
                     continue
-                if param_id in {"B_PTV_PRI", "B_REC", "B_REO"} and not configuration_has_dhw(configuration):
+                if param_id == "B_PTV_PRI" and not configuration_has_dhw_priority(configuration):
+                    continue
+                if param_id in {"B_REC", "B_REO"} and not configuration_has_dhw_recirculation(configuration):
                     continue
             if not WebBoilerGenericSensor._device_has_parameter(device, param_id):
                 continue

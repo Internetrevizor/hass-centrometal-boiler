@@ -1,12 +1,12 @@
 # Centrometal Boiler System for Home Assistant
 
-![Version](https://img.shields.io/badge/version-0.2.0.20-blue.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 
 A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box.
 
-## PelTec II behavior in 0.2.0.20
+## PelTec II behavior in 1.0.0
 
 PelTec II entities are created from a strict allowlist verified against an authenticated portal HTTP and WebSocket capture. Raw, hidden, duplicated, or unverified controller fields are not created as Home Assistant entities.
 
@@ -20,7 +20,9 @@ Exposed PelTec II data includes:
 - Portal-visible temperatures with invalid-value filtering
 - Heating-circuit enabled state, pump demand, pump state, target temperatures, and measured temperatures
 - Pump, fan, heater, flame, vacuum, fuel-level, lambda, and Wi-Fi states where the portal meaning is confirmed. Fan speed itself is not exposed: this controller does not publish it to the portal, and an entity for it could only show a frozen zero. A pump reported both by the boiler and by its heating circuit produces one entity, not two.
-- Photocell resistance, fan speed, 4-way mixing-valve position, feeder-screw activity, turbulator-cleaner activity, and burner-grate position
+- Photocell resistance, 4-way mixing-valve position, feeder-screw activity, turbulator-cleaner activity, and burner-grate position
+- The hydraulic configuration by its scheme number and contents, as in the boiler manual; the pump relays P1–P4 are named after what they drive in that scheme, and buffer and DHW entities exist only where the scheme has them
+- Operation stage texts that follow the controller manual's stage table (see [PARAMETERS.md](PARAMETERS.md#boiler-state) for the exact strings)
 - Descriptive attributes for temporary shutdown marks and operation-stage groups
 - Working counters, including corrected total/active boiler runtime labels
 - Portal temperature settings, editable from Home Assistant when the account may change them, bounded by the controller's own minimum and maximum; read-only rows keep a plain sensor. Plus the K1 circuit switch
@@ -29,7 +31,7 @@ Exposed PelTec II data includes:
 
 The Lambda Probe entity is created even when the controller omits the reading while the boiler is not firing. Any finite numeric value supplied by the controller, including idle values such as `25.5`, is displayed; a later live combustion value updates normally without reloading the integration. The Wi-Fi signal entity follows the controller display: nonzero values are shown in dB, while portal value `0` represents the unavailable `---dB` state and recovers automatically when RSSI is reported.
 
-Older PelTec and other supported Centrometal families retain their established mappings.
+Older PelTec, Compact, CM Pelet-set, BioTec and BioTec Plus boilers keep the mappings inherited from the original project. They are still supported, but the maintainer has no such boiler and has not tested them; reports from owners are welcome.
 
 ## Installation
 
@@ -74,6 +76,10 @@ logger:
 HTTPS and WebSocket certificate verification is always enabled and cannot be turned off.
 
 Under Home Assistant the integration reuses core's own shared SSL context, which is built from `certifi` (or from `REQUESTS_CA_BUNDLE` when one is configured) once per process. Outside Home Assistant the client falls back to its own `certifi`-based context, and to the interpreter's default trust store if `certifi` is not installed.
+
+## Origin
+
+This integration began as a fork of [9a4gl/hass-centrometal-boiler](https://github.com/9a4gl/hass-centrometal-boiler) by Tihomir Heidelberg and contributors, released under the Apache License 2.0. Since 0.2.0 it has been substantially rewritten — portal client, PelTec II decoding, hydraulic schemes, editable settings and the test suite — and from 1.0.0 it is maintained as an independent project. See [NOTICE](NOTICE).
 
 ## License
 

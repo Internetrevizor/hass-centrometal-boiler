@@ -4,6 +4,7 @@ from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 
+from ..peltec2 import peltec2_scheme
 from .WebBoilerGenericSensor import WebBoilerGenericSensor
 
 
@@ -138,6 +139,15 @@ class WebBoilerHeatingCircuitSensor:
             prefix + "_misC": [None, "mdi:pipe-valve", None, name + " Valve Closing"],
             prefix + "_misO": [None, "mdi:pipe-valve", None, name + " Valve Opening"],
         }
+        if device.get("type") == "peltec2" and prefix in {"K1B", "K2B"}:
+            # Where the manual has this circuit load the DHW tank with its own
+            # pump (scheme 43: "P1 - DHW (Heating circuit 1 (K1))"), the
+            # circuit's pump is the DHW pump; say so instead of "Circuit Pump".
+            configuration = device.get_parameter("B_KONF").get("value") if device.has_parameter("B_KONF") else None
+            scheme = peltec2_scheme(configuration)
+            dhw_pump = f"DHW Pump ({prefix[:2]})"
+            if scheme is not None and dhw_pump in scheme.relays.values():
+                items[prefix + "_P"] = [None, "mdi:pump", None, dhw_pump]
         # Portal-confirmed PelTec II fields. Other circuit telemetry is not
         # created at all; exposing raw or guessed values only clutters the
         # device and can mislead users. The second group was confirmed

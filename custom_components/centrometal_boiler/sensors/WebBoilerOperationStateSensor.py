@@ -3,15 +3,24 @@ from homeassistant.core import HomeAssistant
 
 from .WebBoilerGenericSensor import WebBoilerGenericSensor
 
+# Stage texts follow the table "Operation stages (shown on the screen)" in
+# "Technical instructions Controller PelTec II Lambda", pages 96-97. Home
+# Assistant automations compare against these strings, so each one is only
+# changed where it disagreed with the manual; tests/test_operation_stage_labels.py
+# pins the full set.
 _B_STATE_MAP: dict[str, str] = {
     "OFF": "OFF: Switched off",
-    "S0": "S0: Fan blowing / grate check",
-    "S1": "S1: Not used",
+    "S0": "S0: Initial fan blowing, waiting for grate initial position",
+    "S1": "S1: Not in use",
     "S2": "S2: Initial pellet filling",
     "S3": "S3: Waiting for flame",
     "S3-1": "S3-1: Extended ignition / flame verification",
     "S3-2": "S3-2: Additional ignition fuel charge",
-    "S4": "S4: Electric heater igniting",
+    # Wording from the stage table in "Technical instructions Controller PelTec
+    # II Lambda", page 96. S4 follows S3 ("Waiting for flame to appear"): the
+    # flame is already burning and the heater keeps working for a while. The
+    # old "Electric heater igniting" described S3, not S4.
+    "S4": "S4: Electric heater working after flame appears",
     "S5": "S5: Flame developing",
     "SP1": "SP1: Stabilising 1",
     "SP2": "SP2: Stabilising 2",
@@ -27,14 +36,14 @@ _B_STATE_MAP: dict[str, str] = {
     "D5": "D5: Power D5",
     "D6": "D6: Power D6 (max)",
     "S7": "S7: Shutdown stage",
-    "S7-1": "S7-1: Shutting down",
-    "S7-2": "S7-2: Final fan blowing",
-    "S7-3": "S7-3: Standby",
-    "PF0": "PF0: Power failure — heater starting",
-    "PF1": "PF1: Power failure — heater off",
+    "S7-1": "S7-1: Shutdown 1, waiting for flame to disappear",
+    "S7-2": "S7-2: Shutdown 2, fan at maximum speed",
+    "S7-3": "S7-3: Standby, waiting for start request",
+    "PF0": "PF0: Power failure — electric heater on, waiting for flame",
+    "PF1": "PF1: Power failure — flame appeared, electric heater off",
     "PF2": "PF2: Power failure — flame developing",
-    "PF3": "PF3: Power failure — waiting for flame off",
-    "PF4": "PF4: Power failure — final blowing",
+    "PF3": "PF3: Power failure — waiting for flame to disappear",
+    "PF4": "PF4: Power failure — final fan blowing",
     "C0": "C0: Grate cleaning",
 }
 
