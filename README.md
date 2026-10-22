@@ -44,18 +44,36 @@ Both come from the AndroFlo BioTec-Plus fork, where they were confirmed on a rea
 
 ## Installation
 
+Only one integration with the `centrometal_boiler` domain can be installed at a time. If you use the original integration (9a4gl) or another fork of it, remove that one first.
+
+### HACS (recommended)
+
+[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Internetrevizor&repository=hass-centrometal-boiler&category=integration)
+
+Or by hand:
+
+1. In Home Assistant, open **HACS**, then the **⋮** menu (top right) → **Custom repositories**.
+2. Repository: `https://github.com/Internetrevizor/hass-centrometal-boiler`, type: **Integration** → **Add**.
+3. Search for **Centrometal Boiler System** and **Download** it.
+4. Restart Home Assistant.
+5. Open **Settings → Devices & services → Add integration** and select **Centrometal Boiler System**.
+
 ### Manual installation
 
-1. Copy the `centrometal_boiler` folder into `config/custom_components/`.
-2. Remove or replace the existing `config/custom_components/centrometal_boiler` folder first.
-3. Restart Home Assistant.
-4. Open **Settings → Devices & services → Add integration** and select **Centrometal Boiler System**.
+1. Download the latest release from the [releases page](https://github.com/Internetrevizor/hass-centrometal-boiler/releases) (*Source code (zip)*).
+2. Remove the existing `config/custom_components/centrometal_boiler` folder, if there is one.
+3. Copy the `custom_components/centrometal_boiler` folder from the archive into `config/custom_components/`.
+4. Restart Home Assistant.
+5. Open **Settings → Devices & services → Add integration** and select **Centrometal Boiler System**.
+
+## Updating
+
+- **HACS:** open **HACS**, select **Centrometal Boiler System** and install the update (if it does not show yet, **⋮ → Update information**), then restart Home Assistant.
+- **Manual:** replace the `config/custom_components/centrometal_boiler` folder with the one from the new release, then restart Home Assistant.
+
+The integration's configuration, entities, entity IDs and history are kept; there is nothing to set up again. Read the [changelog](CHANGELOG.md) first: when a release changes a state text, automations comparing that text need the new one.
 
 On the first restart, obsolete sensor registry entries created by earlier builds are removed automatically. The cleanup is skipped for any boiler whose parameter snapshot looks incomplete, so an outage on the Centrometal side cannot delete working entities.
-
-### HACS custom repository
-
-Add the repository as a custom HACS integration, install it, and restart Home Assistant.
 
 ## Configuration
 
