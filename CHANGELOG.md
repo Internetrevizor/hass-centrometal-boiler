@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.0.0 — independent release
+
+- The integration is now maintained as an independent project. It began as a fork of [9a4gl/hass-centrometal-boiler](https://github.com/9a4gl/hass-centrometal-boiler) by Tihomir Heidelberg and contributors (Apache License 2.0); the origin is credited in `README.md` and `NOTICE`.
+- Includes everything listed under 0.2.0.21, which was not released on its own. Coming from 0.2.0.20, the changes visible in Home Assistant are the ones in that section: the Boiler State texts, the Configuration entity and the pump relay names.
+- No entity, entity ID or state text changes compared with 0.2.0.21. The domain stays `centrometal_boiler`, so updating from any 0.2.0.x keeps every entity, its history and its automations.
+- Older PelTec, Compact, CM Pelet-set, BioTec and BioTec Plus support is kept unchanged and marked in the README as inherited and untested by the maintainer.
+
+## 0.2.0.21 — operation stages, hydraulic schemes and pump names from the manuals
+
+Checked against *Technical instructions Controller PelTec II Lambda* (stage table, pages 96–97) and *Technical instructions PelTec II Lambda* (hydraulic schemes, chapter 4.2.2, pages 23–58). Entity IDs are unchanged throughout.
+
+**Boiler State texts.** Only the texts that disagreed with the manual change; the rest are identical to 0.2.0.20. Automations comparing the state text need the new strings below; the `Raw stage code` attribute is unaffected.
+
+| Code | 0.2.0.20 | 0.2.0.21 |
+|---|---|---|
+| `S0` | S0: Fan blowing / grate check | S0: Initial fan blowing, waiting for grate initial position |
+| `S1` | S1: Not used | S1: Not in use |
+| `S4` | S4: Electric heater igniting | S4: Electric heater working after flame appears |
+| `S7-1` | S7-1: Shutting down | S7-1: Shutdown 1, waiting for flame to disappear |
+| `S7-2` | S7-2: Final fan blowing | S7-2: Shutdown 2, fan at maximum speed |
+| `S7-3` | S7-3: Standby | S7-3: Standby, waiting for start request |
+| `PF0` | PF0: Power failure — heater starting | PF0: Power failure — electric heater on, waiting for flame |
+| `PF1` | PF1: Power failure — heater off | PF1: Power failure — flame appeared, electric heater off |
+| `PF3` | PF3: Power failure — waiting for flame off | PF3: Power failure — waiting for flame to disappear |
+| `PF4` | PF4: Power failure — final blowing | PF4: Power failure — final fan blowing |
+
+S4 was the substantive error: in the manual it follows S3, "Waiting for flame to appear", so the flame is already burning — "Electric heater igniting" described S3, not S4. A new test pins every stage text so none can change by accident.
+
+**Hydraulic schemes.** PelTec II used the older PelTec's fifteen-scheme list, which numbers schemes differently. It is replaced by the 45 PelTec II schemes from the boiler book, cross-checked against the controller book's "DHW priority" list (page 52) and "Installation" table (page 54).
+- The Configuration entity shows the scheme and its contents (scheme 43: `43. BUF + K1 DHW`, previously `43`), with attributes for the buffer, the DHW tank and what P1–P4 drive.
+- Buffer Tank Heat Request is created in schemes 11–44; DHW Priority where the DHW tank has its own pump or a diverter valve; DHW Recirculation Enabled / Pump where the scheme has a recirculation pump. On scheme 43 all four were already created and still are. A scheme outside the 45 behaves as before.
+
+**Pump relays.**
+- P1–P4 are named after what the manual says they drive in the active scheme and carry a `Function` attribute. On scheme 43: P2 becomes "P2 DHW Recirculation Pump (K1)"; P3 and P4, unused there, keep "P3 Pump" / "P4 Pump" with `Function: Not used in this configuration`.
+- Where K1 loads the DHW tank with its own pump (schemes 9, 10, 17, 20, 43, 44) "K1 Circuit Pump" is named "DHW Pump (K1)" (same for K2).
+- The P1 entity is still left out where P1 is the K1 circuit's own pump, which includes scheme 43 — unchanged there. Where the manual gives P1 another job (buffer pump, K2 circuit, DHW recirculation, diverter valve) it keeps its own entity. A scheme outside the 45 behaves as before.
+
+**Documentation.** `PARAMETERS.md` and `README.md` brought up to date: Burner Command values, fan speed no longer listed, the K1 circuit fields, Pellet Feed, Safety Pressure Switch, the pump anti-blocking interval, editable settings, the scheme table and the full list of Boiler State texts.
+
 ## 0.2.0.20 — cleaning transition, and an end to redundant entity writes
 
 - `B_start = 3` is decoded as `Cleaning`. Identified by the owner and corroborated by a debug capture: `B_specG` went to 4 ("shutdown because burner grate cleaning is required") in the same millisecond as `B_start = 2`, the boiler ran S7-1 → S7-2 → C0, `B_start` became 3 fifteen seconds into C0, and it returned to 1 in the same millisecond as `B_specG` returning to 0.

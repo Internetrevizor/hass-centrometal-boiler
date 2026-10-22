@@ -103,10 +103,16 @@ def test_wifi_zero_is_missing_but_nonzero_db_is_valid() -> None:
 
 
 def test_configuration_component_helpers() -> None:
+    # B_KONF is zero-based: 4 is PelTec II scheme 5 (K1 direct + K2 DHW through
+    # a diverter valve, no buffer) and 12 is scheme 13 (buffer + K1 DHW through
+    # a diverter valve).
     assert peltec2.configuration_has_dhw(4) is True
-    assert peltec2.configuration_has_buffer(4) is True
-    assert peltec2.configuration_has_dhw(12) is False
-    assert peltec2.configuration_has_buffer(12) is False
+    assert peltec2.configuration_has_buffer(4) is False
+    assert peltec2.configuration_has_dhw(12) is True
+    assert peltec2.configuration_has_buffer(12) is True
+    # Scheme 1 is a hydraulic crossover with a K1 mixing circuit, nothing else.
+    assert peltec2.configuration_has_dhw(0) is False
+    assert peltec2.configuration_has_buffer(0) is False
 
 
 def test_percentage_rejects_non_finite_values() -> None:
@@ -132,12 +138,12 @@ def test_scheme_43_has_both_a_buffer_and_a_dhw_tank() -> None:
     """
     assert peltec2.configuration_has_buffer("42") is True
     assert peltec2.configuration_has_dhw("42") is True
-    # Unknown schemes are still gated off; membership has to be confirmed.
-    assert peltec2.configuration_has_buffer("41") is False
-    assert peltec2.configuration_has_dhw("41") is False
-    # The known PelTec table is untouched.
-    assert peltec2.configuration_has_buffer("12") is False
-    assert peltec2.configuration_has_dhw("12") is False
+    assert peltec2.configuration_has_dhw_priority("42") is True
+    assert peltec2.configuration_has_dhw_recirculation("42") is True
+    # A scheme the manual does not list is gated off.
+    assert peltec2.configuration_has_buffer("45") is False
+    assert peltec2.configuration_has_dhw("45") is False
+    assert peltec2.configuration_has_buffer(None) is False
 
 
 def test_burner_command_stays_running_while_the_boiler_burns() -> None:
