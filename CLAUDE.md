@@ -5,7 +5,9 @@ Read `docs/GHID.md` first: it is the owner's guide to the integration and the re
 ## How the owner wants to work
 
 - Reply in **Romanian**. Keep everything the integration shows in Home Assistant (entity names, state texts) in **English**.
-- **Never push to `main`.** Work, commit and push on `claude/git-release-commit-f8oo83`. Releases are created in the GitHub UI with that branch as the target (sessions cannot push tags).
+- **Never push directly to `main`.** Work, commit and push on `claude/git-release-commit-f8oo83`, then open a pull request into `main`; the owner merges it. Releases are tagged from `main` in the GitHub UI (sessions cannot push tags).
+- The project is **independent** since 1.0.0. It began as a fork of `9a4gl/hass-centrometal-boiler` (credited in `README.md` and `NOTICE`); never open pull requests or issues against that repository.
+- `CLAUDE.md` and `docs/GHID.md` are **internal notes**: `.gitattributes` (`export-ignore`) keeps them out of every release archive, and HACS installs only `custom_components/`. Keep it that way: never put notes under `custom_components/`, and add any new internal file to `.gitattributes`.
 - **Propose before changing.** List the intended changes (what, why, source page, effect on the owner's boiler) and wait for approval. Implement only what was approved.
 - **Do not break what works.** Existing entity IDs, entities and automations must keep working. Change a state text or a name only where it is actually wrong, and say exactly which strings changed. After any change to `Boiler State` texts, post the full list of states in chat so the owner can check the automations.
 - **Do not present inferences as facts.** Cite the manual page or a capture. The owner's boiler is scheme 43: P1 is the DHW pump on K1, P2 the DHW recirculation pump, and the valve is automatic. Behaviour on other schemes comes from the manual, not from the owner's boiler.
