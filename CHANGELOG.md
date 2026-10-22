@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0.21 — S4 operation stage label
+
+- Corrected the "Boiler State" text for stage `S4`. It read "Electric heater igniting", but in the controller manual's stage table (*Technical instructions Controller PelTec II Lambda*, page 96) S4 is "Electric heater working after flame appears": it follows S3, "Waiting for flame to appear", so the flame is already burning. The state now reads `S4: Electric heater working after flame appears`.
+- No other stage text, entity, entity ID or attribute changes. An automation that compared the state with `S4: Electric heater igniting` needs the new text; one that uses the `Raw stage code` attribute (`S4`) is unaffected.
+
 ## 0.2.0.20 — cleaning transition, and an end to redundant entity writes
 
 - `B_start = 3` is decoded as `Cleaning`. Identified by the owner and corroborated by a debug capture: `B_specG` went to 4 ("shutdown because burner grate cleaning is required") in the same millisecond as `B_start = 2`, the boiler ran S7-1 → S7-2 → C0, `B_start` became 3 fifteen seconds into C0, and it returned to 1 in the same millisecond as `B_specG` returning to 0.

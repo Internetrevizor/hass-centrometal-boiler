@@ -11,7 +11,11 @@ _B_STATE_MAP: dict[str, str] = {
     "S3": "S3: Waiting for flame",
     "S3-1": "S3-1: Extended ignition / flame verification",
     "S3-2": "S3-2: Additional ignition fuel charge",
-    "S4": "S4: Electric heater igniting",
+    # Wording from the stage table in "Technical instructions Controller PelTec
+    # II Lambda", page 96. S4 follows S3 ("Waiting for flame to appear"): the
+    # flame is already burning and the heater keeps working for a while. The
+    # old "Electric heater igniting" described S3, not S4.
+    "S4": "S4: Electric heater working after flame appears",
     "S5": "S5: Flame developing",
     "SP1": "SP1: Stabilising 1",
     "SP2": "SP2: Stabilising 2",
