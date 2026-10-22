@@ -1,12 +1,12 @@
 # Centrometal Boiler System for Home Assistant
 
-![Version](https://img.shields.io/badge/version-0.2.0.20-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.0.21-blue.svg)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 
 A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box.
 
-## PelTec II behavior in 0.2.0.20
+## PelTec II behavior in 0.2.0.21
 
 PelTec II entities are created from a strict allowlist verified against an authenticated portal HTTP and WebSocket capture. Raw, hidden, duplicated, or unverified controller fields are not created as Home Assistant entities.
 
