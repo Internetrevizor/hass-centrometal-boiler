@@ -155,4 +155,19 @@ Istoric:
 2. Publicarea release-ului v1.0.0 și verificarea pe HA-ul real: numele pompelor, entitatea Configuration, o ardere completă S0 → D → S7.
 3. Actualizarea automatizărilor care compară textele vechi ale stărilor (tabelul de la punctul 4).
 4. Fixture-urile cu `B_KONF` 12, de origine necunoscută.
-5. Clientul WebSocket citește `ConnectionClosed.code` / `.reason`, învechite în `websockets` 13.1 (avertizare găsită de `tests_ha/`). Merge acum, poate fi corectat oricând: **propus, neaprobat încă**.
+5. Includerea în lista implicită HACS (vezi secțiunea 10): de trimis după release-ul 1.1.0.
+
+## 10. Includerea în lista implicită HACS
+
+Lista e repo-ul `hacs/default`; cererea o trimite proprietarul, din contul lui (verificarea „owner” cere ca autorul PR-ului să fie proprietarul repo-ului).
+
+Stare la 22.10.2026:
+- Condițiile tehnice sunt îndeplinite: repo public, descriere și topicuri, issues activ, acțiunea HACS fără `ignore`, Hassfest, release publicat.
+- **Integrarea originală `9a4gl/hass-centrometal-boiler` e deja în listă, cu același domeniu `centrometal_boiler`.** Verificările automate HACS nu blochează asta (verifică doar conflictul cu integrările oficiale din Home Assistant); decid cei care revizuiesc cererea. De spus deschis în cerere.
+
+Pași:
+1. Release nou publicat **după** ce acțiunile HACS și Hassfest au trecut pe acel commit.
+2. Fork la `https://github.com/hacs/default`.
+3. În fișierul `integration`, adăugat `"Internetrevizor/hass-centrometal-boiler",` în ordine alfabetică (fără să conteze majusculele): între `"intelliThings-official/home-assistant-intellithings",` și `"InTheDaylight14/nginx-proxy-manager-switches",`.
+4. PR spre `hacs/default` cu șablonul lor completat (link la release, la o rulare reușită a acțiunii HACS și a Hassfest). Nu se cer review-uri explicit: șablonul spune că PR-ul e închis dacă o faci.
+

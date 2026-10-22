@@ -9,6 +9,8 @@ Collected from the other forks of the original integration. Nothing changes on a
 - **Option: prefix entity names with the product name.** In **Configure**, on by default, so existing names are unchanged. Off turns "PelTec II Lambda Boiler Temperature" into "Boiler Temperature"; entity IDs stay the same. Reads the `product_prefix` key the original integration stored, so an entry that had it off keeps it off.
 - **French and Romanian** translations of the setup, re-authentication and options screens. Entity names stay in English.
 - **Tests inside a real Home Assistant.** `tests_ha/` runs the integration in Home Assistant (pytest-homeassistant-custom-component) against a local fake of the Centrometal website and STOMP broker: setup, scheme 43 entities, realtime updates, commands, an expired session, a broker restart, a wrong password, a portal outage, the options flow and the config flow. CI runs it as a separate job.
+- The realtime client reads the close code and reason from the close frame the server sent (`ConnectionClosed.rcvd`) instead of `ConnectionClosed.code` / `.reason`, deprecated since websockets 13.1. Same values; it just won't break when websockets drops the aliases. Found by the new `tests_ha/`.
+- README: HACS installation step by step with an "Open in HACS" button, manual installation from a release, and an "Updating" section.
 - Credits for the features above are in `README.md` and `NOTICE`.
 
 ## 1.0.0 — independent release

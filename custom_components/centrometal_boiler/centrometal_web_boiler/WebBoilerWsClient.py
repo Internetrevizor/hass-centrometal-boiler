@@ -155,8 +155,12 @@ class WebBoilerWsClient:
                     try:
                         await self._handle_connection(ws)
                     except ConnectionClosed as exc:
-                        close_code = getattr(exc, "code", None)
-                        close_reason = getattr(exc, "reason", None)
+                        # The close frame the server sent; None when the
+                        # connection dropped without one. ConnectionClosed.code
+                        # and .reason are deprecated aliases since websockets 13.1.
+                        received = exc.rcvd
+                        close_code = received.code if received is not None else None
+                        close_reason = received.reason if received is not None else None
                         self.logger.warning(
                             "WebBoilerWsClient connection closed %s %s (%s)",
                             close_code,
