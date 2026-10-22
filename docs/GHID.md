@@ -1,6 +1,6 @@
 # Ghidul integrării Centrometal Boiler System (PelTec II Lambda)
 
-Stare la 22.10.2026, versiunea **1.0.0**: proiect independent, pornit ca fork al `9a4gl/hass-centrometal-boiler` (Tihomir Heidelberg, Apache 2.0, menționat în `README.md` și `NOTICE`).
+Stare la 22.10.2026, versiunea **1.1.0**: proiect independent, pornit ca fork al `9a4gl/hass-centrometal-boiler` (Tihomir Heidelberg, Apache 2.0, menționat în `README.md` și `NOTICE`).
 
 Acest ghid și `CLAUDE.md` sunt note interne: rămân în repo, dar sunt excluse din arhivele de release prin `.gitattributes`, iar HACS instalează oricum doar `custom_components/`.
 
@@ -100,6 +100,15 @@ Entitatea **Configuration** arată schema (de ex. `43. BUF + K1 DHW`) și are at
 
 Restul parametrilor (temperaturi, contoare, circuit K1, setări editabile) sunt descriși în `PARAMETERS.md`.
 
+## 5b. Funcții pentru comunitate (din 1.1.0)
+
+Preluate din celelalte fork-uri ale integrării originale (vezi `NOTICE`):
+- **BioTec-Plus:** „Tank Level” (`B_razina`) și „Fuel Level” (`B_razP`, %), indisponibile până la prima valoare de la controler. Butonul **„Pellet Mode”** trimite comanda `SCCMD = 1` (trecere de pe lemne pe peleți; nu există comandă înapoi). Preluate de la AndroFlo, netestate de noi pe un cazan real.
+- **Opțiunea „Prefix entity names with the product name”** din *Configure*: pornită implicit; oprită → numele fără „PelTec II Lambda” în față. ID-urile entităților nu se schimbă.
+- **Traduceri** ale ecranelor de configurare: engleză, franceză, română. Numele entităților rămân în engleză.
+
+Fork-uri analizate (22.10.2026): 9a4gl (original, oprit în 03.2026), AndroFlo (activ, doar BioTec-Plus, bibliotecă externă proprie), grigoras-cristinel (baza versiunii noastre 0.1.0.0), TheCarpetMerchant/mgcd-jed (Compact, prefix), ULazdins (procent peleți), ravloony (fără modificări). Ce nu am preluat: predicția de reaprindere pentru foc pe lemne (AndroFlo, beta), ora controlerului și tabelele de program.
+
 ## 6. Manualele de referință
 
 Ambele sunt publicate de Centrometal (centrometal.hr → descărcări), în engleză. Nu sunt în repo: repo-ul e public, iar manualele sunt materialul producătorului.
@@ -136,7 +145,8 @@ Istoric:
 
 - Testele au nevoie de Home Assistant instalat. Fără el, 10 module de test nu se pot încărca și sunt sărite în tăcere.
 - Local: Python 3.13 + `pip install homeassistant aiohttp pytest pytest-asyncio ruff "websockets>=13.1" "certifi>=2024.7.4" voluptuous`, apoi `ruff check .` și `pytest`.
-- CI (`.github/workflows/validate.yml`): Python 3.14 și aceleași dependențe.
+- **Teste în Home Assistant real** (`tests_ha/`): integrarea rulează în HA (pytest-homeassistant-custom-component), contra unui portal Centrometal simulat (`tests_ha/fake_centrometal.py`: site + broker STOMP; pot fi împinse valori în timp real, simulată o cădere sau o sesiune expirată). Într-un mediu separat: `pip install -r tests_ha/requirements.txt`, apoi `pytest -c tests_ha/pytest.ini tests_ha`.
+- CI (`.github/workflows/validate.yml`): jobul `python` (Python 3.14, testele unitare) și jobul `home-assistant` (Python 3.13, `tests_ha/`).
 - Fixture-uri: `tests/fixtures/peltec2_lambda_real_snapshot.json` și `..._http_snapshot.json` (ambele cu `B_KONF` 12, adică schema 13). Nu se știe de unde provin: proprietarul nu le recunoaște, iar instalația lui e pe schema 43.
 
 ## 9. Subiecte deschise
@@ -145,3 +155,4 @@ Istoric:
 2. Publicarea release-ului v1.0.0 și verificarea pe HA-ul real: numele pompelor, entitatea Configuration, o ardere completă S0 → D → S7.
 3. Actualizarea automatizărilor care compară textele vechi ale stărilor (tabelul de la punctul 4).
 4. Fixture-urile cu `B_KONF` 12, de origine necunoscută.
+5. Clientul WebSocket citește `ConnectionClosed.code` / `.reason`, învechite în `websockets` 13.1 (avertizare găsită de `tests_ha/`). Merge acum, poate fi corectat oricând: **propus, neaprobat încă**.

@@ -378,6 +378,34 @@ class WebBoilerClient:
             self.logger.warning("WebBoilerClient::turn rejected response %s (%s)", response, self.log_account)
         return ok
 
+    async def set_pellet_mode(self, serial) -> bool:
+        """Switch a BioTec-Plus from wood to pellets; True when the portal accepted it."""
+        try:
+            device = self.data.get_device_by_serial(serial)
+        except LookupError as err:
+            self.logger.error(
+                "WebBoilerClient::set_pellet_mode unknown serial %s: %s (%s)",
+                serial,
+                err,
+                self.log_account,
+            )
+            return False
+        try:
+            response = await self.http_client.set_pellet_mode_by_id(device["id"])
+        except HttpClientAuthError:
+            raise
+        except HttpClientConnectionError as e:
+            self.logger.warning("WebBoilerClient::set_pellet_mode failed: %s (%s)", e, self.log_account)
+            return False
+        ok = _response_is_success(response)
+        if not ok:
+            self.logger.warning(
+                "WebBoilerClient::set_pellet_mode rejected response %s (%s)",
+                response,
+                self.log_account,
+            )
+        return ok
+
     async def set_parameter_value(self, serial, dbindex, value) -> bool:
         """Write an editable settings slot; True when the portal accepted it."""
         try:

@@ -1,0 +1,55 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Ce compte est déjà configuré",
+      "reauth_successful": "La réauthentification a réussi",
+      "wrong_account": "Le compte indiqué ne correspond pas à l'entrée de configuration existante"
+    },
+    "error": {
+      "cannot_connect": "Connexion impossible. Vérifiez les identifiants et réessayez.",
+      "invalid_auth": "Authentification invalide.",
+      "too_many_requests": "Trop de requêtes. Réessayez plus tard.",
+      "unknown": "Erreur inattendue."
+    },
+    "step": {
+      "user": {
+        "description": "Saisissez les identifiants de votre compte Centrometal Web Boiler.",
+        "data": {
+          "email": "E-mail",
+          "password": "Mot de passe",
+          "prefix": "Préfixe des noms d'entités"
+        },
+        "data_description": {
+          "prefix": "Facultatif. À utiliser lorsqu'une même instance de Home Assistant contient plusieurs chaudières."
+        }
+      },
+      "reauth_confirm": {
+        "description": "Mettez à jour les identifiants de votre compte Centrometal Web Boiler.",
+        "data": {
+          "email": "E-mail",
+          "password": "Mot de passe",
+          "prefix": "Préfixe des noms d'entités"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Choisissez comment les entités sont nommées, et réglez la fréquence à laquelle l'intégration interroge Centrometal ainsi que l'attente après un problème de connexion. Les valeurs par défaut sont celles des versions précédentes.",
+        "data": {
+          "product_prefix": "Préfixer les noms d'entités avec le nom du produit",
+          "refresh_interval": "Intervalle d'actualisation",
+          "retry_base_interval": "Intervalle initial avant nouvelle tentative",
+          "retry_max_interval": "Intervalle maximal avant nouvelle tentative"
+        },
+        "data_description": {
+          "product_prefix": "Activé : « PelTec II Lambda Boiler Temperature ». Désactivé : « Boiler Temperature ». Seuls les noms affichés changent ; les identifiants d'entités restent les mêmes.",
+          "refresh_interval": "Fréquence d'actualisation de l'état de la chaudière par HTTP tant que la connexion est établie.",
+          "retry_base_interval": "Délai avant la première tentative de reconnexion après une déconnexion. Il double après chaque nouvel échec.",
+          "retry_max_interval": "Le délai de reconnexion ne dépasse jamais cette valeur, quelle que soit la durée de la panne."
+        }
+      }
+    }
+  }
+}

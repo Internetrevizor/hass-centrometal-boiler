@@ -448,6 +448,16 @@ class HttpClient(HttpClientBase):
         data = {"cmd-name": "CMD", "cmd-value": cmd_value}
         return await self._control(id, data)
 
+    async def set_pellet_mode_by_id(self, id: str | int) -> dict[str, Any]:
+        """Switch a wood/pellet boiler (BioTec-Plus) from wood to pellets.
+
+        Same envelope as the on/off command. Taken from the AndroFlo fork of the
+        client library, where it was confirmed on a BioTec-Plus. There is no
+        remote command back to wood.
+        """
+        data = {"cmd-name": "SCCMD", "cmd-value": 1}
+        return await self._control(id, data)
+
     async def turn_device_circuit(self, id: str | int, circuit: int, on: bool) -> dict[str, Any]:
         cmd_name = "PWR " + str(circuit)
         cmd_value = 1 if on else 0

@@ -16,5 +16,6 @@ Read `docs/GHID.md` first: it is the owner's guide to the integration and the re
 ## Checks before every push
 
 - `ruff check .` and `pytest`, with Home Assistant installed (`pip install homeassistant aiohttp pytest pytest-asyncio ruff "websockets>=13.1" "certifi>=2024.7.4" voluptuous`, Python 3.13+). Without Home Assistant, ten test modules are silently skipped.
+- `tests_ha/` runs the integration in a real Home Assistant against a fake Centrometal cloud. It needs its own environment (`pip install -r tests_ha/requirements.txt`, Python 3.13) and runs with `pytest -c tests_ha/pytest.ini tests_ha`. Run it too before pushing a change to the integration's behaviour.
 - A version bump touches `manifest.json`, the `README.md` badge and heading, `tests/test_repository_layout.py` and a new `CHANGELOG.md` section.
 - `tests/test_operation_stage_labels.py` pins every `Boiler State` text. Change it only on purpose.

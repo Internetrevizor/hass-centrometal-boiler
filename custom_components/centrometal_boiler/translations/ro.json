@@ -1,0 +1,55 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Contul este deja configurat",
+      "reauth_successful": "Reautentificarea a reușit",
+      "wrong_account": "Contul introdus nu corespunde configurației existente"
+    },
+    "error": {
+      "cannot_connect": "Conectarea a eșuat. Verifică datele de autentificare și încearcă din nou.",
+      "invalid_auth": "Autentificare invalidă.",
+      "too_many_requests": "Prea multe cereri. Încearcă din nou mai târziu.",
+      "unknown": "Eroare neașteptată."
+    },
+    "step": {
+      "user": {
+        "description": "Introdu datele contului tău Centrometal Web Boiler.",
+        "data": {
+          "email": "E-mail",
+          "password": "Parolă",
+          "prefix": "Prefix pentru numele entităților"
+        },
+        "data_description": {
+          "prefix": "Opțional. Folosește-l când aceeași instanță Home Assistant are mai multe cazane."
+        }
+      },
+      "reauth_confirm": {
+        "description": "Actualizează datele contului tău Centrometal Web Boiler.",
+        "data": {
+          "email": "E-mail",
+          "password": "Parolă",
+          "prefix": "Prefix pentru numele entităților"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Alege cum sunt denumite entitățile și cât de des interoghează integrarea portalul Centrometal, respectiv cât așteaptă după o problemă de conexiune. Valorile implicite sunt cele din versiunile anterioare.",
+        "data": {
+          "product_prefix": "Numele produsului în fața numelor entităților",
+          "refresh_interval": "Interval de actualizare",
+          "retry_base_interval": "Interval inițial de reîncercare",
+          "retry_max_interval": "Interval maxim de reîncercare"
+        },
+        "data_description": {
+          "product_prefix": "Activat: „PelTec II Lambda Boiler Temperature”. Dezactivat: „Boiler Temperature”. Se schimbă doar numele afișate; ID-urile entităților rămân aceleași.",
+          "refresh_interval": "Cât de des se actualizează starea cazanului prin HTTP cât timp conexiunea e activă.",
+          "retry_base_interval": "Pauza dinaintea primei reconectări după o deconectare. Se dublează după fiecare eșec.",
+          "retry_max_interval": "Pauza de reconectare nu depășește niciodată această valoare, oricât ar dura întreruperea."
+        }
+      }
+    }
+  }
+}

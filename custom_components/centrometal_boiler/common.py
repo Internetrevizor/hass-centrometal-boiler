@@ -60,6 +60,12 @@ def format_time(hass: HomeAssistant, timestamp, tzinfo=None) -> str:
 
 
 def format_name(hass: HomeAssistant, device, name) -> str:
+    # Entity names are built as "<product> <what it is>". With the product
+    # prefix switched off in the options, drop the product part here, in one
+    # place, instead of at every entity.
+    product = device.get("product")
+    if device.get("__product_prefix", True) is False and product and name.startswith(f"{product} "):
+        name = name[len(product) + 1 :]
     name = name.replace("GMX EASY", "biotec")
     serial = device["serial"]
     if device.get("__multi_device"):

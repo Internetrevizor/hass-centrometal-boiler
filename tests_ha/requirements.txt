@@ -1,0 +1,4 @@
+# Runs the integration inside a real Home Assistant (see conftest.py). The
+# harness pins a matching Home Assistant release.
+pytest-homeassistant-custom-component
+websockets>=13.1

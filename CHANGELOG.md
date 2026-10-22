@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 — features from the other forks
+
+Collected from the other forks of the original integration. Nothing changes on a PelTec II unless the new naming option is switched off: no entity, entity ID or state text differs from 1.0.0.
+
+- **BioTec-Plus: Tank Level and Fuel Level are back.** `B_razina` (Empty / Reserve / Full) and `B_razP` (%) existed in the original integration and in the AndroFlo fork, and were lost here when the entity set was rebuilt around PelTec II. They use the original names and unique ids, so an existing entity comes back as itself. Both are created at setup and stay unavailable until the controller first reports them, since it can do so only after setup.
+- **BioTec-Plus: Pellet Mode button.** Switches the boiler from wood to pellets with the portal command `SCCMD = 1`, taken from the AndroFlo fork where it was confirmed on a real boiler. There is no remote command back to wood. Unique id `<serial>_button_pellet_mode`, as in that fork.
+- **Option: prefix entity names with the product name.** In **Configure**, on by default, so existing names are unchanged. Off turns "PelTec II Lambda Boiler Temperature" into "Boiler Temperature"; entity IDs stay the same. Reads the `product_prefix` key the original integration stored, so an entry that had it off keeps it off.
+- **French and Romanian** translations of the setup, re-authentication and options screens. Entity names stay in English.
+- **Tests inside a real Home Assistant.** `tests_ha/` runs the integration in Home Assistant (pytest-homeassistant-custom-component) against a local fake of the Centrometal website and STOMP broker: setup, scheme 43 entities, realtime updates, commands, an expired session, a broker restart, a wrong password, a portal outage, the options flow and the config flow. CI runs it as a separate job.
+- Credits for the features above are in `README.md` and `NOTICE`.
+
 ## 1.0.0 — independent release
 
 - The integration is now maintained as an independent project. It began as a fork of [9a4gl/hass-centrometal-boiler](https://github.com/9a4gl/hass-centrometal-boiler) by Tihomir Heidelberg and contributors (Apache License 2.0); the origin is credited in `README.md` and `NOTICE`.
