@@ -204,12 +204,12 @@ def test_portal_confirmed_values_and_invalid_sentinels() -> None:
     assert by_param["K1B_Tsob"].state_class is None
     assert by_param["K1B_onOff"].native_value == "On"
     assert by_param["K1B_zahP"].native_value == "Off"
-    # B_P1 is the K1 circuit's pump here -- B_P1, B_Pk1_k2 and K1B_P changed
-    # in the same millisecond on all seven switching cycles of the capture --
-    # so only the circuit entity is created for it.
-    assert "B_P1" not in by_param
+    # This fixture carries B_KONF 12, i.e. scheme 13, which the boiler manual
+    # (page 30) draws with "P1 - Diverter valve". P1 is not the K1 pump there,
+    # so it keeps its own entity, named after the manual's legend.
+    assert by_param["B_P1"].name.endswith("P1 Diverter Valve")
+    assert by_param["B_P1"].extra_state_attributes["Function"] == "Diverter Valve"
     assert by_param["K1B_P"].native_value == "Off"
-    assert "B_P1" not in by_param
     assert by_param["B_gri"].native_value == "Off"
     assert by_param["B_razina"].native_value == "Full"
     assert by_param["B_razP"].native_value == 99.0
@@ -218,7 +218,10 @@ def test_portal_confirmed_values_and_invalid_sentinels() -> None:
     assert by_param["B_sng"].native_unit_of_measurement == "kW"
     assert by_param["B_Tkm1"].name.endswith("DHW Tank Temperature")
     assert by_param["B_specG"].extra_state_attributes["Meaning"] == "No special shutdown activity"
-    assert "B_PTV_PRI" not in by_param
+    # Scheme 13 has a buffer and a DHW tank, so DHW priority is created. The
+    # fixture does not carry B_bup, B_REC or B_REO, so there is nothing to
+    # create for them.
+    assert by_param["B_PTV_PRI"].native_value == "On"
     assert "B_bup" not in by_param
     assert "B_REC" not in by_param
     assert "B_REO" not in by_param
@@ -228,7 +231,7 @@ def test_portal_confirmed_values_and_invalid_sentinels() -> None:
 def test_optional_dhw_and_buffer_states_follow_controller_configuration() -> None:
     device = _make_device(
         {
-            "B_KONF": 4,  # DHW || BUF
+            "B_KONF": 42,  # scheme 43: buffer + K1 DHW with its own pump
             "B_PTV_PRI": 1,
             "B_bup": 1,
             "B_REC": 0,
@@ -245,7 +248,7 @@ def test_optional_dhw_and_buffer_states_follow_controller_configuration() -> Non
 
     no_dhw_or_buffer = _make_device(
         {
-            "B_KONF": 12,  # DHC 2X
+            "B_KONF": 0,  # scheme 1: hydraulic crossover + K1 mixing circuit
             "B_PTV_PRI": 1,
             "B_bup": 1,
             "B_REC": 0,
@@ -319,18 +322,18 @@ def test_start_pause_override_is_portal_compatible() -> None:
 def test_configuration_12_maps_to_portal_configuration_13() -> None:
     device = _make_device({"B_KONF": "12"})
     entity = WebBoilerConfigurationSensor.create_entities(None, device)[0]
-    assert entity.native_value == "13. DHC 2X"
+    assert entity.native_value == "13. BUF + K1 DHW (diverter valve)"
 
 
 def test_unlabelled_configuration_reports_the_portal_scheme_number() -> None:
-    """PelTec II has more hydraulic schemes than the labelled list covers.
+    """A scheme outside the manual's 45 reports the portal's number.
 
     The labels are 1-based and B_KONF is 0-based, so falling back to the raw
     value showed a number one below the one on the portal's screen.
     """
-    device = _make_device({"B_KONF": 42})
+    device = _make_device({"B_KONF": 60})
     entity = WebBoilerConfigurationSensor.create_entities(None, device)[0]
-    assert entity.native_value == "43"
+    assert entity.native_value == "61"
 
 
 def test_external_start_is_decoded_without_a_raw_auxiliary_input_sensor() -> None:

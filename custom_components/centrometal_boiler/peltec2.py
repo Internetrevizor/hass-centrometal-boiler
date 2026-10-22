@@ -9,20 +9,26 @@ sensor entities.
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, NamedTuple
 
 from .centrometal_web_boiler.parameter_filters import is_ignored_peltec2_parameter
 
 __all__ = [
     "BUFFER_CONFIGURATIONS",
     "DHW_CONFIGURATIONS",
+    "DHW_PRIORITY_CONFIGURATIONS",
+    "DHW_RECIRCULATION_CONFIGURATIONS",
     "INTERNET_ACCESS",
+    "PELTEC2_SCHEMES",
+    "PelTec2Scheme",
     "START_TRANSITIONS",
     "STATUS_MARKS",
     "STATUS_MARK_DETAILS",
     "TANK_LEVELS",
     "configuration_has_buffer",
     "configuration_has_dhw",
+    "configuration_has_dhw_priority",
+    "configuration_has_dhw_recirculation",
     "decode_accessory_bitmask",
     "decode_input_bitmask",
     "decode_internet_access",
@@ -33,7 +39,9 @@ __all__ = [
     "format_portal_hex",
     "is_ignored_peltec2_parameter",
     "parse_portal_hex",
+    "peltec2_scheme",
     "portal_hex_bit_is_set",
+    "relay_function",
     "valid_lambda",
     "valid_nonnegative_measurement",
     "valid_percentage",
@@ -126,22 +134,260 @@ TANK_LEVELS = {
     2: "Full",
 }
 
-# Zero-based B_KONF values from the controller configuration list. Optional
-# DHW/buffer telemetry is meaningful only in configurations that contain the
-# corresponding hydraulic component. The portal numbers the same schemes
-# 1-based, so B_KONF 42 is the portal's scheme 43.
+class PelTec2Scheme(NamedTuple):
+    """One PelTec II hydraulic configuration, as the boiler manual draws it.
+
+    label          what the scheme contains, prefixed with its portal number
+    buffer         "CAS", "CAS-B" (a buffer with an integrated DHW tank) or None
+    dhw            how a separate DHW tank is loaded: by its own "pump", through
+                   the "diverter" valve, straight off the "boiler" circuit, or
+                   None when there is no separate DHW tank
+    recirculation  whether the scheme has a DHW recirculation pump
+    relays         what each of the P1..P4 relays drives; a relay missing here
+                   is not used by the scheme
+    """
+
+    label: str
+    buffer: str | None
+    dhw: str | None
+    recirculation: bool
+    relays: dict[int, str]
+
+
+# Every PelTec II configuration, keyed by the 1-based number the portal and the
+# controller screen show. B_KONF is the same number minus one, so B_KONF 42 is
+# scheme 43. Transcribed from "Technical instructions PelTec II Lambda" (boiler
+# book, chapter 4.2.2 "Configuration / scheme", pages 23-58).
+#
+# This replaces a table taken from the older PelTec's fifteen-scheme list,
+# which is numbered differently: it put a DHW tank in scheme 1 and a buffer in
+# schemes 4-9, none of which have one on a PelTec II, and knew nothing of the
+# buffer in schemes 11-42 and 44.
+#
+# Two independent checks agree with the transcription:
+#   * the controller manual ("DHW priority", page 52) lists exactly the schemes
+#     below whose DHW tank has its own pump or a diverter valve -- 2, 5, 6, 9,
+#     10, 13-20, 25, 32, 35, 40, 43, 44 -- and its "Installation" table
+#     (page 54) puts a buffer in exactly 11-44;
+#   * a PelTec II Lambda v3.03dL capture on scheme 43 shows a buffer with both
+#     sensors reporting and P1 switching in the same millisecond as K1B_P --
+#     P1 is that scheme's DHW pump on K1, as page 57 draws it.
 #
 # The controller reports B_bup/B_PTV_PRI/B_REC/B_REO in every configuration,
 # including ones with no buffer and no DHW tank, so their presence in a
-# snapshot proves nothing. Membership below has to come from the scheme
-# itself, confirmed against the portal's hydraulic drawing.
-#
-# 42 (portal 43): confirmed from a PelTec II Lambda v3.03dL capture -- the
-# drawing shows a buffer with both sensors reporting (B_Tak1_1, B_Tak2_1) and
-# a DHW tank whose own sensor is not installed (the portal renders "-°C" and
-# no B_Tptv* parameter is reported at all).
-DHW_CONFIGURATIONS = frozenset({0, 2, 4, 6, 7, 8, 11, 14, 42})
-BUFFER_CONFIGURATIONS = frozenset({3, 4, 5, 6, 7, 8, 10, 13, 42})
+# snapshot proves nothing; whether they mean anything comes from this table.
+PELTEC2_SCHEMES: dict[int, PelTec2Scheme] = {
+    1: PelTec2Scheme(
+        "1. CRO + K1 mixing", buffer=None, dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump"},
+    ),
+    2: PelTec2Scheme(
+        "2. CRO + K1 mixing + K2 DHW", buffer=None, dhw="pump", recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "DHW Pump (K2)", 3: "DHW Recirculation Pump (K2)"},
+    ),
+    3: PelTec2Scheme(
+        "3. CRO + K1 mixing + K2 direct", buffer=None, dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "K2 Circuit Pump"},
+    ),
+    4: PelTec2Scheme(
+        "4. K1 direct", buffer=None, dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump"},
+    ),
+    5: PelTec2Scheme(
+        "5. K1 direct + K2 DHW (diverter valve)", buffer=None, dhw="diverter", recirculation=True,
+        relays={1: "K1 / DHW Pump (via Diverter Valve)", 2: "Diverter Valve", 3: "DHW Recirculation Pump (K2)"},
+    ),
+    6: PelTec2Scheme(
+        "6. CRO + K1 direct + K2 DHW", buffer=None, dhw="pump", recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "DHW Pump (K2)", 3: "DHW Recirculation Pump (K2)"},
+    ),
+    7: PelTec2Scheme(
+        "7. CRO + K1 direct + K2 direct", buffer=None, dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "K2 Circuit Pump"},
+    ),
+    8: PelTec2Scheme(
+        "8. K1 DHW (boiler circuit)", buffer=None, dhw="boiler", recirculation=True,
+        relays={1: "DHW Recirculation Pump (K1)"},
+    ),
+    9: PelTec2Scheme(
+        "9. CRO + K1 DHW", buffer=None, dhw="pump", recirculation=True,
+        relays={1: "DHW Pump (K1)", 2: "DHW Recirculation Pump (K1)"},
+    ),
+    10: PelTec2Scheme(
+        "10. CRO + K1 DHW + K2 DHW", buffer=None, dhw="pump", recirculation=True,
+        relays={
+            1: "DHW Pump (K1)",
+            2: "DHW Pump (K2)",
+            3: "DHW Recirculation Pump (K1)",
+            4: "DHW Recirculation Pump (K2)",
+        },
+    ),
+    11: PelTec2Scheme(
+        "11. BUF", buffer="CAS", dhw=None, recirculation=False,
+        relays={},
+    ),
+    12: PelTec2Scheme(
+        "12. BUF with DHW", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "DHW Recirculation Pump"},
+    ),
+    13: PelTec2Scheme(
+        "13. BUF + K1 DHW (diverter valve)", buffer="CAS", dhw="diverter", recirculation=True,
+        relays={1: "Diverter Valve", 2: "DHW Recirculation Pump (K1)"},
+    ),
+    14: PelTec2Scheme(
+        "14. BUF + K1 mixing + K2 DHW (diverter valve)", buffer="CAS", dhw="diverter", recirculation=True,
+        relays={1: "Diverter Valve", 2: "K1 Circuit Pump", 3: "DHW Recirculation Pump (K2)"},
+    ),
+    15: PelTec2Scheme(
+        "15. BUF + K1 direct + K2 DHW (diverter valve)", buffer="CAS", dhw="diverter", recirculation=True,
+        relays={1: "Diverter Valve", 2: "K1 Circuit Pump", 3: "DHW Recirculation Pump (K2)"},
+    ),
+    16: PelTec2Scheme(
+        "16. BUF + K1 DHW + K2 DHW (diverter valve)", buffer="CAS", dhw="diverter", recirculation=True,
+        relays={
+            1: "Diverter Valve",
+            2: "DHW Pump (K2)",
+            3: "DHW Recirculation Pump (K1)",
+            4: "DHW Recirculation Pump (K2)",
+        },
+    ),
+    17: PelTec2Scheme(
+        "17. CRO + BUF + K1 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "Buffer Tank Pump", 2: "DHW Pump (K1)", 3: "DHW Recirculation Pump (K1)"},
+    ),
+    18: PelTec2Scheme(
+        "18. CRO + BUF + K1 mixing + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "Buffer Tank Pump", 2: "DHW Pump (K2)", 3: "K1 Circuit Pump", 4: "DHW Recirculation Pump (K2)"},
+    ),
+    19: PelTec2Scheme(
+        "19. CRO + BUF + K1 direct + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "Buffer Tank Pump", 2: "DHW Pump (K2)", 3: "K1 Circuit Pump", 4: "DHW Recirculation Pump (K2)"},
+    ),
+    20: PelTec2Scheme(
+        "20. CRO + BUF + K1 DHW + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "Buffer Tank Pump", 2: "DHW Pump (K1)", 3: "DHW Pump (K2)", 4: "DHW Recirculation Pump (K1)"},
+    ),
+    21: PelTec2Scheme(
+        "21. CRO + BUF + K1 mixing", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump"},
+    ),
+    22: PelTec2Scheme(
+        "22. CRO + BUF with DHW + K1 mixing", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "DHW Recirculation Pump"},
+    ),
+    23: PelTec2Scheme(
+        "23. CRO + BUF + K1 mixing + K2 direct", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "K2 Circuit Pump"},
+    ),
+    24: PelTec2Scheme(
+        "24. CRO + BUF with DHW + K1 mixing + K2 direct", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "K2 Circuit Pump", 4: "DHW Recirculation Pump"},
+    ),
+    25: PelTec2Scheme(
+        "25. CRO + BUF + K1 mixing + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "DHW Pump (K2)", 4: "DHW Recirculation Pump (K2)"},
+    ),
+    26: PelTec2Scheme(
+        "26. CRO + BUF + K1 direct", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump"},
+    ),
+    27: PelTec2Scheme(
+        "27. CRO + BUF with DHW + K1 direct", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "DHW Recirculation Pump"},
+    ),
+    28: PelTec2Scheme(
+        "28. CRO + BUF + K1 mixing + K2 direct", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K2 Circuit Pump", 2: "Buffer Tank Pump", 3: "K1 Circuit Pump"},
+    ),
+    29: PelTec2Scheme(
+        "29. CRO + BUF with DHW + K1 mixing + K2 direct", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K2 Circuit Pump", 2: "Buffer Tank Pump", 3: "K1 Circuit Pump", 4: "DHW Recirculation Pump"},
+    ),
+    30: PelTec2Scheme(
+        "30. CRO + BUF + K1 direct + K2 direct", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "K2 Circuit Pump"},
+    ),
+    31: PelTec2Scheme(
+        "31. CRO + BUF with DHW + K1 direct + K2 direct", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "K2 Circuit Pump", 4: "DHW Recirculation Pump"},
+    ),
+    32: PelTec2Scheme(
+        "32. CRO + BUF + K1 direct + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "Buffer Tank Pump", 3: "DHW Pump (K2)", 4: "DHW Recirculation Pump (K2)"},
+    ),
+    33: PelTec2Scheme(
+        "33. BUF + K1 mixing", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump"},
+    ),
+    34: PelTec2Scheme(
+        "34. BUF with DHW + K1 mixing", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "DHW Recirculation Pump"},
+    ),
+    35: PelTec2Scheme(
+        "35. BUF + K1 mixing + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "DHW Pump (K2)", 3: "DHW Recirculation Pump (K2)"},
+    ),
+    36: PelTec2Scheme(
+        "36. BUF + K1 mixing + K2 direct", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "K2 Circuit Pump"},
+    ),
+    37: PelTec2Scheme(
+        "37. BUF with DHW + K1 mixing + K2 direct", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "K2 Circuit Pump", 3: "DHW Recirculation Pump"},
+    ),
+    38: PelTec2Scheme(
+        "38. BUF + K1 direct", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump"},
+    ),
+    39: PelTec2Scheme(
+        "39. BUF with DHW + K1 direct", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "DHW Recirculation Pump"},
+    ),
+    40: PelTec2Scheme(
+        "40. BUF + K1 direct + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "DHW Pump (K2)", 3: "DHW Recirculation Pump (K2)"},
+    ),
+    41: PelTec2Scheme(
+        "41. BUF + K1 direct + K2 direct", buffer="CAS", dhw=None, recirculation=False,
+        relays={1: "K1 Circuit Pump", 2: "K2 Circuit Pump"},
+    ),
+    42: PelTec2Scheme(
+        "42. BUF with DHW + K1 direct + K2 direct", buffer="CAS-B", dhw=None, recirculation=True,
+        relays={1: "K1 Circuit Pump", 2: "K2 Circuit Pump", 3: "DHW Recirculation Pump"},
+    ),
+    43: PelTec2Scheme(
+        "43. BUF + K1 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={1: "DHW Pump (K1)", 2: "DHW Recirculation Pump (K1)"},
+    ),
+    44: PelTec2Scheme(
+        "44. BUF + K1 DHW + K2 DHW", buffer="CAS", dhw="pump", recirculation=True,
+        relays={
+            1: "DHW Pump (K1)",
+            2: "DHW Pump (K2)",
+            3: "DHW Recirculation Pump (K1)",
+            4: "DHW Recirculation Pump (K2)",
+        },
+    ),
+    45: PelTec2Scheme(
+        "45. CRO (CM2K circuits only)", buffer=None, dhw=None, recirculation=False,
+        relays={},
+    ),
+}
+
+# Zero-based B_KONF values, derived from the table above.
+BUFFER_CONFIGURATIONS = frozenset(number - 1 for number, scheme in PELTEC2_SCHEMES.items() if scheme.buffer)
+# Any DHW tank, separate or integrated in a CAS-B buffer.
+DHW_CONFIGURATIONS = frozenset(
+    number - 1 for number, scheme in PELTEC2_SCHEMES.items() if scheme.dhw or scheme.buffer == "CAS-B"
+)
+# DHW priority stops the heating-circuit pumps while the DHW tank loads, so it
+# only means something where the tank has its own pump or a diverter valve.
+DHW_PRIORITY_CONFIGURATIONS = frozenset(
+    number - 1 for number, scheme in PELTEC2_SCHEMES.items() if scheme.dhw in {"pump", "diverter"}
+)
+DHW_RECIRCULATION_CONFIGURATIONS = frozenset(
+    number - 1 for number, scheme in PELTEC2_SCHEMES.items() if scheme.recirculation
+)
 
 
 def _as_int(value: Any, *, base: int = 10) -> int | None:
@@ -283,16 +529,44 @@ def decode_tank_level(value: Any) -> str:
     return TANK_LEVELS.get(parsed, f"Unknown ({parsed})")
 
 
+def peltec2_scheme(value: Any) -> PelTec2Scheme | None:
+    """Return the manual's description of a zero-based B_KONF value."""
+    parsed = _as_int(value)
+    return PELTEC2_SCHEMES.get(parsed + 1) if parsed is not None else None
+
+
 def configuration_has_dhw(value: Any) -> bool:
     """Return whether the controller configuration contains a DHW tank."""
     parsed = _as_int(value)
     return parsed in DHW_CONFIGURATIONS if parsed is not None else False
 
 
+def configuration_has_dhw_priority(value: Any) -> bool:
+    """Return whether DHW priority means anything in this configuration."""
+    parsed = _as_int(value)
+    return parsed in DHW_PRIORITY_CONFIGURATIONS if parsed is not None else False
+
+
+def configuration_has_dhw_recirculation(value: Any) -> bool:
+    """Return whether the configuration has a DHW recirculation pump."""
+    parsed = _as_int(value)
+    return parsed in DHW_RECIRCULATION_CONFIGURATIONS if parsed is not None else False
+
+
 def configuration_has_buffer(value: Any) -> bool:
     """Return whether the controller configuration contains a buffer tank."""
     parsed = _as_int(value)
     return parsed in BUFFER_CONFIGURATIONS if parsed is not None else False
+
+
+def relay_function(value: Any, relay: int) -> str | None:
+    """Return what relay P<relay> drives in this configuration, per the manual.
+
+    ``None`` when the configuration is not in the table or does not use the
+    relay at all.
+    """
+    scheme = peltec2_scheme(value)
+    return scheme.relays.get(relay) if scheme is not None else None
 
 
 def valid_temperature(parameter: str, value: Any) -> float | None:

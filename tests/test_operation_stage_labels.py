@@ -15,8 +15,8 @@ from custom_components.centrometal_boiler.sensors.WebBoilerOperationStateSensor 
 
 EXPECTED = {
     "OFF": "OFF: Switched off",
-    "S0": "S0: Fan blowing / grate check",
-    "S1": "S1: Not used",
+    "S0": "S0: Initial fan blowing, waiting for grate initial position",
+    "S1": "S1: Not in use",
     "S2": "S2: Initial pellet filling",
     "S3": "S3: Waiting for flame",
     "S3-1": "S3-1: Extended ignition / flame verification",
@@ -37,14 +37,14 @@ EXPECTED = {
     "D5": "D5: Power D5",
     "D6": "D6: Power D6 (max)",
     "S7": "S7: Shutdown stage",
-    "S7-1": "S7-1: Shutting down",
-    "S7-2": "S7-2: Final fan blowing",
-    "S7-3": "S7-3: Standby",
-    "PF0": "PF0: Power failure — heater starting",
-    "PF1": "PF1: Power failure — heater off",
+    "S7-1": "S7-1: Shutdown 1, waiting for flame to disappear",
+    "S7-2": "S7-2: Shutdown 2, fan at maximum speed",
+    "S7-3": "S7-3: Standby, waiting for start request",
+    "PF0": "PF0: Power failure — electric heater on, waiting for flame",
+    "PF1": "PF1: Power failure — flame appeared, electric heater off",
     "PF2": "PF2: Power failure — flame developing",
-    "PF3": "PF3: Power failure — waiting for flame off",
-    "PF4": "PF4: Power failure — final blowing",
+    "PF3": "PF3: Power failure — waiting for flame to disappear",
+    "PF4": "PF4: Power failure — final fan blowing",
     "C0": "C0: Grate cleaning",
 }
 
