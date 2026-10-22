@@ -1,12 +1,12 @@
 # Centrometal Boiler System for Home Assistant
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 
 A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box.
 
-## PelTec II behavior in 1.0.0
+## PelTec II behavior in 1.1.0
 
 PelTec II entities are created from a strict allowlist verified against an authenticated portal HTTP and WebSocket capture. Raw, hidden, duplicated, or unverified controller fields are not created as Home Assistant entities.
 
@@ -33,6 +33,15 @@ The Lambda Probe entity is created even when the controller omits the reading wh
 
 Older PelTec, Compact, CM Pelet-set, BioTec and BioTec Plus boilers keep the mappings inherited from the original project. They are still supported, but the maintainer has no such boiler and has not tested them; reports from owners are welcome.
 
+## BioTec-Plus
+
+Besides the inherited mappings, a BioTec-Plus (also sold as Morvan GMX EASY) gets:
+
+- **Tank Level** (`B_razina`: Empty / Reserve / Full) and **Fuel Level** (`B_razP`, %). The controller can report them only after setup; until it does, both entities are unavailable rather than showing a made-up value.
+- A **Pellet Mode** button that switches the boiler from wood to pellets. There is no remote command back to wood.
+
+Both come from the AndroFlo BioTec-Plus fork, where they were confirmed on a real boiler. They are not tested by the maintainer here.
+
 ## Installation
 
 ### Manual installation
@@ -52,7 +61,12 @@ Add the repository as a custom HACS integration, install it, and restart Home As
 
 Configuration is through the Home Assistant UI. Enter the Centrometal account e-mail, password, and optional entity-name prefix.
 
-The integration options only control HTTP refresh and reconnect timing. There are no schedule or weather switches.
+The integration options (**Configure**) control:
+
+- **Prefix entity names with the product name**: on by default ("PelTec II Lambda Boiler Temperature"); off gives "Boiler Temperature". Only the displayed names change; entity IDs stay the same. An entry carried over from the original integration with this switched off keeps it off.
+- HTTP refresh and reconnect timing.
+
+There are no schedule or weather switches. The setup and options screens are available in English, French and Romanian; entity names stay in English.
 
 ## "Last updated"
 
@@ -80,6 +94,8 @@ Under Home Assistant the integration reuses core's own shared SSL context, which
 ## Origin
 
 This integration began as a fork of [9a4gl/hass-centrometal-boiler](https://github.com/9a4gl/hass-centrometal-boiler) by Tihomir Heidelberg and contributors, released under the Apache License 2.0. Since 0.2.0 it has been substantially rewritten — portal client, PelTec II decoding, hydraulic schemes, editable settings and the test suite — and from 1.0.0 it is maintained as an independent project. See [NOTICE](NOTICE).
+
+Features carried over from other forks of the original project: the BioTec-Plus Pellet Mode button, tank level handling and the idea of testing against a fake Centrometal cloud from [AndroFlo/hass-centrometal-boiler](https://github.com/AndroFlo/hass-centrometal-boiler); the estimated pellet percentage from ULazdins; the product-name prefix option from TheCarpetMerchant and mgcd-jed.
 
 ## License
 

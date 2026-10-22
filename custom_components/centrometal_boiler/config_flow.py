@@ -12,9 +12,11 @@ from homeassistant.helpers import selector
 
 from .centrometal_web_boiler import HttpClientAuthError, HttpClientConnectionError, WebBoilerClient
 from .const import (
+    CONF_PRODUCT_PREFIX,
     CONF_REFRESH_INTERVAL,
     CONF_RETRY_BASE_INTERVAL,
     CONF_RETRY_MAX_INTERVAL,
+    DEFAULT_PRODUCT_PREFIX,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_RETRY_BASE_INTERVAL,
     DEFAULT_RETRY_MAX_INTERVAL,
@@ -197,8 +199,12 @@ class CentrometalBoilerOptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_create_entry(data=user_input)
 
         options = self.config_entry.options
+        product_prefix_default = options.get(
+            CONF_PRODUCT_PREFIX, self.config_entry.data.get(CONF_PRODUCT_PREFIX, DEFAULT_PRODUCT_PREFIX)
+        )
         schema = vol.Schema(
             {
+                vol.Optional(CONF_PRODUCT_PREFIX, default=product_prefix_default): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_REFRESH_INTERVAL,
                     default=options.get(CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL),

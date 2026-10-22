@@ -42,6 +42,8 @@ _RELAY_PARAMETERS = {"B_P1": 1, "B_P2": 2, "B_P3": 3, "B_P4": 4}
 # Relay functions under which P1 is the K1 circuit's own pump, and therefore the
 # same device K1B_P reports.
 _K1_OWN_PUMP = {"K1 Circuit Pump", "DHW Pump (K1)"}
+# BioTec-Plus parameters that may only arrive after setup.
+_BIOTEC_PLUS_LATE_PARAMETERS = ("B_razina", "B_razP")
 
 
 class WebBoilerGenericSensor(SensorEntity):
@@ -213,6 +215,8 @@ class WebBoilerGenericSensor(SensorEntity):
         # (ignition starts) or minutes of runtime -- never show decimals.
         if self._param_name.startswith("CNT_"):
             return 0
+        if self.device.get("type") == "biopl" and self._param_name == "B_razP":
+            return 0
         if self.device.get("type") == "peltec2":
             if self._device_class == SensorDeviceClass.TEMPERATURE:
                 return 1
@@ -284,6 +288,10 @@ class WebBoilerGenericSensor(SensorEntity):
             return valid_signal_db(value)
         if self.device.get("type") == "peltec2" and self._param_name in {"B_razP", "B_misP"}:
             return valid_percentage(value)
+        if self.device.get("type") == "biopl" and self._param_name == "B_razP":
+            return valid_percentage(value)
+        if self.device.get("type") == "biopl" and self._param_name == "B_razina" and value is None:
+            return None
         if self.device.get("type") == "peltec2" and self._param_name == "B_FotV":
             return valid_nonnegative_measurement(value, maximum=1001)
         if self.device.get("type") == "peltec2" and self._param_name == "B_fan":
@@ -338,6 +346,11 @@ class WebBoilerGenericSensor(SensorEntity):
     def available(self) -> bool:
         if not self.web_boiler_client.has_fresh_data():
             return False
+        if self.device.get("type") == "biopl" and self._param_name in _BIOTEC_PLUS_LATE_PARAMETERS:
+            value = self.parameter.get("value")
+            if self._param_name == "B_razP":
+                return valid_percentage(value) is not None
+            return value is not None
         if self.device.get("type") != "peltec2":
             return True
 
@@ -548,6 +561,14 @@ class WebBoilerGenericSensor(SensorEntity):
             generic_map = BIOTEC_GENERIC_SENSORS
             skip_params = {"B_CMD"}
         elif device["type"] == "biopl":
+            # The tank state and fill level can arrive after setup (the
+            # original integration and the AndroFlo fork both handled this).
+            # Create the parameters now so the entities exist from the start
+            # and fill in when the first value comes; until then they are
+            # unavailable rather than showing a made-up value.
+            for late_parameter in _BIOTEC_PLUS_LATE_PARAMETERS:
+                if not device.has_parameter(late_parameter):
+                    device.create_parameter(late_parameter, None)
             generic_map = BIOTEC_PLUS_GENERIC_SENSORS
             skip_params = {"B_CMD"}
         else:
