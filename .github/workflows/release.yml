@@ -1,0 +1,80 @@
+name: Release
+
+# Publishes a GitHub release whenever main carries a manifest version that has
+# no release yet: bumping "version" in manifest.json (with its CHANGELOG.md
+# section) and pushing to main is all a release takes. The checks HACS asks
+# for run first, so a release only goes out after they pass.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      new: ${{ steps.version.outputs.new }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Read the manifest version and look for its tag
+        id: version
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('custom_components/centrometal_boiler/manifest.json'))['version'])")
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if git rev-parse --quiet --verify "refs/tags/${tag}" > /dev/null; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "${tag} is already released; nothing to do."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "${tag} has no release yet."
+          fi
+
+  validate:
+    needs: version
+    if: needs.version.outputs.new == 'true'
+    uses: ./.github/workflows/validate.yml
+
+  hassfest:
+    needs: version
+    if: needs.version.outputs.new == 'true'
+    uses: ./.github/workflows/hassfest.yml
+
+  hacs:
+    needs: version
+    if: needs.version.outputs.new == 'true'
+    uses: ./.github/workflows/hacs.yml
+
+  release:
+    needs: [version, validate, hassfest, hacs]
+    if: needs.version.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Take the release notes from CHANGELOG.md
+        run: python3 .github/scripts/release_notes.py "${{ needs.version.outputs.version }}" > release-notes.md
+      - name: Create the tag and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          prerelease=""
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            prerelease="--prerelease"
+          fi
+          gh release create "${TAG}" --target "${GITHUB_SHA}" --title "${TAG}" --notes-file release-notes.md ${prerelease}

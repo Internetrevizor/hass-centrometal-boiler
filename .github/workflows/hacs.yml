@@ -3,6 +3,8 @@ name: HACS
 on:
   push:
   pull_request:
+  # Called by release.yml, which publishes a release only after these pass.
+  workflow_call:
 
 jobs:
   hacs:

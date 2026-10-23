@@ -127,19 +127,24 @@ Ambele sunt publicate de Centrometal (centrometal.hr → descărcări), în engl
 
 ## 7. Cum se publică o versiune
 
-Regula proprietarului: **nu se face push direct în `main`**. Lucrul se face pe branch-ul `claude/git-release-commit-f8oo83`, intră în `main` printr-un pull request pe care îl aprobă proprietarul, iar release-urile pleacă din `main`.
+Regula proprietarului (din 23.10.2026): modificările **aprobate** ajung direct în `main`, fără PR. Lucrul se face pe branch-ul `claude/git-release-commit-f8oo83`, se rulează verificările, se urcă branch-ul și apoi `main` e avansat la el (`git push origin HEAD:main`). PR doar dacă cere proprietarul.
 
-1. Pentru o versiune nouă se schimbă: `custom_components/centrometal_boiler/manifest.json` (`version`), badge-ul și titlul din `README.md`, `tests/test_repository_layout.py` (versiunea așteptată) și o secțiune nouă în `CHANGELOG.md`.
-2. Commit și push pe branch. CI-ul (Validate, Hassfest, HACS) rulează la fiecare push.
-3. Pull request din branch în `main`. Proprietarul îl verifică și face merge.
-4. Tag-ul nu poate fi urcat din sesiunile Claude (serverul respinge push-ul de tag-uri). Release-ul se creează din GitHub: Releases → Draft a new release → tag nou `vX.Y.Z` → **Target: `main`** → descrierea din CHANGELOG → Publish.
-5. În HA: HACS → Update information → instalare → repornire.
+**Release-urile sunt automate** (`.github/workflows/release.yml`):
+1. Pentru o versiune nouă se schimbă: `custom_components/centrometal_boiler/manifest.json` (`version`), badge-ul și titlul din `README.md`, `tests/test_repository_layout.py` (versiunea așteptată) și o secțiune nouă `## X.Y.Z — ...` în `CHANGELOG.md`.
+2. La push în `main`, workflow-ul vede că `vX.Y.Z` nu există încă, rulează Validate, Hassfest și HACS, apoi creează tag-ul și release-ul cu notele din secțiunea respectivă din CHANGELOG. Fără secțiune în CHANGELOG, release-ul nu se face.
+3. Un push în `main` fără schimbare de versiune nu creează nimic.
+4. O versiune cu sufix (de ex. `1.2.0b1`) iese ca pre-release.
+5. În HA: HACS → Update information → instalare → repornire (sau manual, din arhiva release-ului).
+
+Sesiunile Claude nu pot crea ele însele release-uri sau tag-uri (GitHub refuză pentru acest tip de sesiune); workflow-ul le creează cu token-ul repo-ului.
 
 Istoric:
 - **0.2.0.11**: release vechi din `main`.
 - **0.2.0.20**: importat din zip, PR-ul [Internetrevizor/hass-centrometal-boiler#1](https://github.com/Internetrevizor/hass-centrometal-boiler/pull/1) intrat în `main`, release publicat pe 26.09.2026.
 - **0.2.0.21**: doar pe branch (commit-urile `2c0575a` și `9c5bace`), nepublicat separat; intră în 1.0.0.
 - **1.0.0**: release independent (atribuire, `NOTICE`, fișierele interne excluse din release), fără schimbări de entități față de 0.2.0.21. Merge în `main` prin PR, apoi release din `main`.
+- **1.1.0**: funcții din celelalte fork-uri (BioTec-Plus, opțiunea de prefix, traduceri fr/ro, `tests_ha/`), corectura `websockets`, documentația HACS. PR #3, release publicat manual pe 22.10.2026.
+- **După 1.1.0**: release automat la push în `main` (`release.yml`) și push direct în `main` pentru modificările aprobate. De menționat în CHANGELOG la următoarea versiune.
 
 ## 8. Dezvoltare și teste
 
