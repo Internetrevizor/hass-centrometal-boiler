@@ -1,178 +1,189 @@
-# Ghidul integrării Centrometal Boiler System (PelTec II Lambda)
+# Centrometal Boiler System integration guide (PelTec II Lambda)
 
-Stare la 22.10.2026, versiunea **1.1.0**: proiect independent, pornit ca fork al `9a4gl/hass-centrometal-boiler` (Tihomir Heidelberg, Apache 2.0, menționat în `README.md` și `NOTICE`).
+Status on 24.10.2026, version **1.1.0**: an independent project that began as a fork of `9a4gl/hass-centrometal-boiler` (Tihomir Heidelberg, Apache 2.0, credited in `README.md` and `NOTICE`).
 
-Acest ghid și `CLAUDE.md` sunt note interne: rămân în repo, dar sunt excluse din arhivele de release prin `.gitattributes`, iar HACS instalează oricum doar `custom_components/`.
+This guide and `CLAUDE.md` are internal notes: they stay in the repository, but `.gitattributes` keeps them out of every release archive, and HACS installs only `custom_components/` anyway. The owner reads and writes in Romanian; replies to the owner are in Romanian, while everything in the repository is in English.
 
-## 1. Ce este
+## 1. What it is
 
-Integrare Home Assistant (custom component, instalată prin HACS) pentru cazanele Centrometal conectate la portalul cloud prin CM WiFi-Box. Citește datele prin HTTP (polling) și WebSocket (STOMP, timp real) și trimite comenzi (pornire/oprire cazan, circuite, setări editabile).
+A Home Assistant integration (custom component, installed through HACS) for Centrometal boilers connected to the cloud portal through a CM WiFi-Box. It reads data over HTTP (polling) and WebSocket (STOMP, realtime) and sends commands (boiler on/off, circuits, editable settings).
 
-- Domeniu: `centrometal_boiler`
-- Cod: `custom_components/centrometal_boiler/`
-- Familii suportate: PelTec II (`peltec2`), PelTec (`peltec`), Compact, CM Pelet-set, BioTec, BioTec Plus. Detaliile de mai jos sunt pentru **PelTec II**.
+- Domain: `centrometal_boiler`
+- Code: `custom_components/centrometal_boiler/`
+- Supported families: PelTec II (`peltec2`), PelTec (`peltec`), Compact, CM Pelet-set, BioTec, BioTec Plus. The details below are for **PelTec II**.
 
-## 2. Instalația proprietarului
+## 2. The owner's installation
 
 | | |
 |---|---|
-| Cazan | PelTec II Lambda, firmware controler `v3.03dL` |
-| Schema hidraulică | **43** (`B_KONF` = 42): buffer „CAS” (senzori sus/jos) + circuitul **K1 = ACM (DHW)** |
-| P1 | **pompa de ACM** a circuitului K1, aceeași pompă ca `K1B_P` (entitatea „DHW Pump (K1)”). `B_P1` nu are entitate separată: în captură, `B_P1` și `K1B_P` au comutat în aceeași milisecundă la toate cele 7 cicluri. |
-| P2 | pompa de **recirculare ACM** (K1), entitatea „P2 DHW Recirculation Pump (K1)” |
-| P3, P4 | nefolosite în schema 43 (atribut `Function: Not used in this configuration`) |
-| Vana cu 4 căi | pe circuitul cazanului, automată (`B_misP`, „4-Way Mixing Valve Position”) |
-| Senzor ACM | neinstalat (portalul afișează „-°C”) |
+| Boiler | PelTec II Lambda, controller firmware `v3.03dL` |
+| Hydraulic scheme | **43** (`B_KONF` = 42): "CAS" buffer (upper/lower sensors) + circuit **K1 = DHW** |
+| P1 | the **DHW pump** of circuit K1, the same pump as `K1B_P` (entity "DHW Pump (K1)"). `B_P1` has no entity of its own: in a capture, `B_P1` and `K1B_P` switched in the same millisecond on all seven cycles. |
+| P2 | the **DHW recirculation pump** (K1), entity "P2 DHW Recirculation Pump (K1)" |
+| P3, P4 | not used in scheme 43 (attribute `Function: Not used in this configuration`) |
+| 4-way mixing valve | on the boiler circuit, automatic (`B_misP`, "4-Way Mixing Valve Position") |
+| DHW sensor | not installed (the portal shows "-°C") |
 
-Sursa pentru schema 43: manualul cazanului, pagina 57.
+Source for scheme 43: boiler manual, page 57.
 
-## 3. Instalare și actualizare
+## 3. Installing and updating
 
-1. HACS → integrarea Centrometal → ⋮ → **Update information** → instalează versiunea nouă.
-2. Repornește Home Assistant.
-3. Prima pornire după actualizare șterge automat entitățile pe care integrarea nu le mai creează. Curățarea e sărită dacă datele de la portal par incomplete.
+1. HACS → the Centrometal integration → ⋮ → **Update information** → install the new version (or manually, from the release archive).
+2. Restart Home Assistant.
+3. The first start after an update removes entities the integration no longer creates. The cleanup is skipped when the portal data looks incomplete.
 
-`entity_id`-urile nu se schimbă între versiuni (sunt legate de `unique_id` = `<serial>-<parametru>`). La unele entități se schimbă doar numele afișat.
+Entity IDs do not change between versions (they follow the `unique_id`, `<serial>-<parameter>`). Some entities only change their displayed name.
 
-## 4. Stările cazanului (Boiler State, `B_STATE`)
+## 4. Boiler State (`B_STATE`)
 
-Textele urmează tabelul „Operation stages” din manualul de regulare (pag. 96–97). Automatizările care compară textul au nevoie de șirurile exacte. Atributul `Raw stage code` conține codul simplu (`S4`, `D6`…) și e mai sigur pentru automatizări.
+The texts follow the "Operation stages" table in the controller manual (pages 96–97). Automations that compare the text need the exact strings. The `Raw stage code` attribute holds the bare code (`S4`, `D6`, …) and is the safer choice for automations.
 
-| Cod | Text în HA | Schimbat în 0.2.0.21 |
+| Code | Text in Home Assistant | Changed in 0.2.0.21 |
 |---|---|---|
 | OFF | OFF: Switched off | |
-| S0 | S0: Initial fan blowing, waiting for grate initial position | da (era „Fan blowing / grate check”) |
-| S1 | S1: Not in use | da (era „Not used”) |
+| S0 | S0: Initial fan blowing, waiting for grate initial position | yes (was "Fan blowing / grate check") |
+| S1 | S1: Not in use | yes (was "Not used") |
 | S2 | S2: Initial pellet filling | |
 | S3 | S3: Waiting for flame | |
 | S3-1 | S3-1: Extended ignition / flame verification | |
 | S3-2 | S3-2: Additional ignition fuel charge | |
-| S4 | S4: Electric heater working after flame appears | da (era „Electric heater igniting”, greșit) |
+| S4 | S4: Electric heater working after flame appears | yes (was "Electric heater igniting", which was wrong) |
 | S5 | S5: Flame developing | |
-| SP1…SP5 | SP1: Stabilising 1 … SP5: Stabilising 5 (manualul are doar SP1–SP3) | |
+| SP1…SP5 | SP1: Stabilising 1 … SP5: Stabilising 5 (the manual has only SP1–SP3) | |
 | S6 | S6: Additional flame development | |
 | D0…D6 | D0: Power D0 (min) … D6: Power D6 (max) | |
 | S7 | S7: Shutdown stage | |
-| S7-1 | S7-1: Shutdown 1, waiting for flame to disappear | da (era „Shutting down”) |
-| S7-2 | S7-2: Shutdown 2, fan at maximum speed | da (era „Final fan blowing”) |
-| S7-3 | S7-3: Standby, waiting for start request | da (era „Standby”) |
-| PF0 | PF0: Power failure — electric heater on, waiting for flame | da (era „heater starting”) |
-| PF1 | PF1: Power failure — flame appeared, electric heater off | da (era „heater off”) |
+| S7-1 | S7-1: Shutdown 1, waiting for flame to disappear | yes (was "Shutting down") |
+| S7-2 | S7-2: Shutdown 2, fan at maximum speed | yes (was "Final fan blowing") |
+| S7-3 | S7-3: Standby, waiting for start request | yes (was "Standby") |
+| PF0 | PF0: Power failure — electric heater on, waiting for flame | yes (was "heater starting") |
+| PF1 | PF1: Power failure — flame appeared, electric heater off | yes (was "heater off") |
 | PF2 | PF2: Power failure — flame developing | |
-| PF3 | PF3: Power failure — waiting for flame to disappear | da (era „waiting for flame off”) |
-| PF4 | PF4: Power failure — final fan blowing | da (era „final blowing”) |
+| PF3 | PF3: Power failure — waiting for flame to disappear | yes (was "waiting for flame off") |
+| PF4 | PF4: Power failure — final fan blowing | yes (was "final blowing") |
 | C0 | C0: Grate cleaning | |
 
-Testul `tests/test_operation_stage_labels.py` fixează lista completă, ca nicio schimbare să nu se producă din greșeală.
+`tests/test_operation_stage_labels.py` pins the full list, so none of them can change by accident.
 
-Alte decodări PelTec II:
-- `B_start` („Burner Command”): 0 Stopped, 1 Running, 2 Stopping, 3 Cleaning. Dacă `B_STATE` = S7-3, arată „Paused / standby”.
-- `B_specG` („Status Mark”): 0 None, 1 R (flacără pierdută), 2 B (bimetal țeavă peleți), 3 T (turbulatori), 4 G (curățare grătar), 5 F.
+Other PelTec II decoding:
+- `B_start` ("Burner Command"): 0 Stopped, 1 Running, 2 Stopping, 3 Cleaning. With `B_STATE` = S7-3 it shows "Paused / standby".
+- `B_specG` ("Status Mark"): 0 None, 1 R (flame lost), 2 B (pellet tube bimetal), 3 T (turbulators), 4 G (grate cleaning), 5 F.
 
-## 5. Schemele hidraulice PelTec II
+## 5. PelTec II hydraulic schemes
 
-`B_KONF` e numărul schemei minus 1 (portalul și ecranul controlerului arată numărul real). Tabelul complet cu cele 45 de scheme e în `custom_components/centrometal_boiler/peltec2.py` (`PELTEC2_SCHEMES`), transcris din manualul cazanului, capitolul 4.2.2 (pag. 23–58). E verificat încrucișat cu manualul de regulare: lista „DHW priority” (pag. 52) și tabelul „Installation” (pag. 54).
+`B_KONF` is the scheme number minus one (the portal and the controller screen show the real number). The full table of the 45 schemes is in `custom_components/centrometal_boiler/peltec2.py` (`PELTEC2_SCHEMES`), transcribed from the boiler manual, chapter 4.2.2 (pages 23–58). It is cross-checked against the controller manual: the "DHW priority" list (page 52) and the "Installation" table (page 54).
 
-Ce decide schema:
+What the scheme decides:
 
-| Entitate | Se creează în schemele |
+| Entity | Created in schemes |
 |---|---|
 | Buffer Tank Heat Request (`B_bup`) | 11–44 |
 | DHW Priority (`B_PTV_PRI`) | 2, 5, 6, 9, 10, 13–20, 25, 32, 35, 40, 43, 44 |
-| DHW Recirculation Enabled / Pump (`B_REC`, `B_REO`) | toate schemele cu pompă de recirculare ACM |
+| DHW Recirculation Enabled / Pump (`B_REC`, `B_REO`) | every scheme with a DHW recirculation pump |
 
-Ce face releul P1, după manual:
+What relay P1 drives, according to the manual:
 
-| Rolul lui P1 | Scheme |
+| P1's role | Schemes |
 |---|---|
-| Pompa circuitului K1 (calorifere/pardoseală) | 1–4, 6, 7, 21–27, 30–42 |
-| Pompa de ACM pe K1 | 9, 10, 43, 44 |
-| Vana cu 3 căi (diverter); agentul termic îl circulă pompa cazanului P(PWM) | 13–16 |
-| Pompa buffer-ului | 17–20 |
-| Pompa circuitului K2 | 28, 29 |
-| Pompa de recirculare ACM | 8, 12 |
-| Pompă comună K1/ACM; vana cu 3 căi e pe P2 | 5 |
-| Nefolosit | 11, 45 |
+| K1 circuit pump (radiators / underfloor) | 1–4, 6, 7, 21–27, 30–42 |
+| DHW pump on K1 | 9, 10, 43, 44 |
+| 3-way diverter valve; the boiler pump P(PWM) moves the water | 13–16 |
+| Buffer tank pump | 17–20 |
+| K2 circuit pump | 28, 29 |
+| DHW recirculation pump | 8, 12 |
+| Shared K1 / DHW pump; the 3-way valve is on P2 | 5 |
+| Not used | 11, 45 |
 
-Releele P1–P4 primesc numele rolului din schema activă (de ex. „P2 DHW Recirculation Pump (K1)”) și au atributul `Function`. Unde P1 e chiar pompa lui K1, nu se creează entitate separată pentru P1 (`K1B_P` o raportează deja). Unde K1/K2 încarcă boilerul de ACM cu pompa proprie, pompa circuitului se numește „DHW Pump (K1)” / „DHW Pump (K2)”. O schemă care nu e în manual (`B_KONF` ≥ 45) se comportă ca înainte.
+Relays P1–P4 are named after their role in the active scheme (for example "P2 DHW Recirculation Pump (K1)") and carry a `Function` attribute. Where P1 is the K1 circuit's own pump, no separate P1 entity is created (`K1B_P` already reports it). Where K1/K2 loads the DHW tank with its own pump, the circuit pump is named "DHW Pump (K1)" / "DHW Pump (K2)". A scheme the manual does not list (`B_KONF` ≥ 45) behaves as before.
 
-Entitatea **Configuration** arată schema (de ex. `43. BUF + K1 DHW`) și are atributele: Buffer tank, DHW tank, DHW recirculation, P1…P4.
+The **Configuration** entity shows the scheme (for example `43. BUF + K1 DHW`) with the attributes Buffer tank, DHW tank, DHW recirculation and P1…P4.
 
-Restul parametrilor (temperaturi, contoare, circuit K1, setări editabile) sunt descriși în `PARAMETERS.md`.
+The other parameters (temperatures, counters, K1 circuit, editable settings) are described in `PARAMETERS.md`.
 
-## 5b. Funcții pentru comunitate (din 1.1.0)
+## 5b. Community features (since 1.1.0)
 
-Preluate din celelalte fork-uri ale integrării originale (vezi `NOTICE`):
-- **BioTec-Plus:** „Tank Level” (`B_razina`) și „Fuel Level” (`B_razP`, %), indisponibile până la prima valoare de la controler. Butonul **„Pellet Mode”** trimite comanda `SCCMD = 1` (trecere de pe lemne pe peleți; nu există comandă înapoi). Preluate de la AndroFlo, netestate de noi pe un cazan real.
-- **Opțiunea „Prefix entity names with the product name”** din *Configure*: pornită implicit; oprită → numele fără „PelTec II Lambda” în față. ID-urile entităților nu se schimbă.
-- **Traduceri** ale ecranelor de configurare: engleză, franceză, română. Numele entităților rămân în engleză.
+Taken from the other forks of the original integration (see `NOTICE`):
+- **BioTec-Plus:** "Tank Level" (`B_razina`) and "Fuel Level" (`B_razP`, %), unavailable until the controller first reports them. The **"Pellet Mode"** button sends `SCCMD = 1` (wood to pellets; there is no command back). Taken from AndroFlo; not tested here on a real boiler.
+- **Option "Prefix entity names with the product name"** in *Configure*: on by default; off drops "PelTec II Lambda" from the front of the names. Entity IDs do not change.
+- **Translations** of the setup screens: English, French, Romanian. Entity names stay in English.
 
-Fork-uri analizate (22.10.2026): 9a4gl (original, oprit în 03.2026), AndroFlo (activ, doar BioTec-Plus, bibliotecă externă proprie), grigoras-cristinel (baza versiunii noastre 0.1.0.0), TheCarpetMerchant/mgcd-jed (Compact, prefix), ULazdins (procent peleți), ravloony (fără modificări). Ce nu am preluat: predicția de reaprindere pentru foc pe lemne (AndroFlo, beta), ora controlerului și tabelele de program.
+Forks reviewed (22.10.2026): 9a4gl (the original, no changes since 03.2026), AndroFlo (active, BioTec-Plus only, its own external library), grigoras-cristinel (the base of our 0.1.0.0), TheCarpetMerchant / mgcd-jed (Compact, prefix option), ULazdins (pellet percentage), ravloony (no changes of its own). Not taken: the wood-fire relight prediction (AndroFlo, beta), the controller clock and the schedule tables.
 
-## 6. Manualele de referință
+## 6. Reference manuals
 
-Ambele sunt publicate de Centrometal (centrometal.hr → descărcări), în engleză. Nu sunt în repo: repo-ul e public, iar manualele sunt materialul producătorului.
+Both are published by Centrometal (centrometal.hr → downloads), in English. They are not in the repository: the repository is public and the manuals are the manufacturer's material.
 
-**„Technical instructions Controller PelTec II Lambda”** (fișierul `PelTec-II-Lambda-12-48-regulation-ENG.pdf`, 100 de pagini):
-- pag. 52: DHW priority (lista schemelor cu boiler ACM);
-- pag. 54: Installation (care scheme au buffer și circuite);
-- pag. 55–58: Manual test (P(PWM), P1–P4, vane);
-- pag. 81–86: erori și avertizări (E12 presostat de siguranță, E18 nu apare flacăra la aprindere, E19, E23, E24, W2, I1–I19);
-- pag. 96–97: Operation stages (tabelul S0…C0, PF0–PF4);
-- pag. 97–98: marcajele R, T, G, B.
+**"Technical instructions Controller PelTec II Lambda"** (file `PelTec-II-Lambda-12-48-regulation-ENG.pdf`, 100 pages):
+- p. 52: DHW priority (the schemes with a DHW tank);
+- p. 54: Installation (which schemes have a buffer and which circuits);
+- pp. 55–58: Manual test (P(PWM), P1–P4, valves);
+- pp. 81–86: errors and warnings (E12 safety pressure switch, E18 no flame in the ignition stage, E19, E23, E24, W2, I1–I19);
+- pp. 96–97: Operation stages (the S0…C0 and PF0–PF4 table);
+- pp. 97–98: the R, T, G and B marks.
 
-**„Technical instructions PelTec II Lambda”** (fișierul `PelTec-II-Lambda-12-48-boiler-ENG.pdf`, 96 de pagini):
-- cap. 4.2.2, pag. 23–58: cele 45 de configurații, cu legenda pompelor și senzorilor;
-- pag. 57: configurația 43 (instalația proprietarului).
+**"Technical instructions PelTec II Lambda"** (file `PelTec-II-Lambda-12-48-boiler-ENG.pdf`, 96 pages):
+- chapter 4.2.2, pp. 23–58: the 45 configurations, with the pump and sensor legends;
+- p. 57: configuration 43 (the owner's installation).
 
-## 7. Cum se publică o versiune
+## 7. Publishing a version
 
-Regula proprietarului (din 23.10.2026): modificările **aprobate** ajung direct în `main`, fără PR. Lucrul se face pe branch-ul `claude/git-release-commit-f8oo83`, se rulează verificările, se urcă branch-ul și apoi `main` e avansat la el (`git push origin HEAD:main`). PR doar dacă cere proprietarul.
+The owner's rule (since 23.10.2026): **approved** changes go straight to `main`, without a pull request. Work happens on the `claude/git-release-commit-f8oo83` branch; the checks are run, the branch is pushed, then `main` is fast-forwarded to it (`git push origin HEAD:main`). A pull request only when the owner asks for one.
 
-**Release-urile sunt automate** (`.github/workflows/release.yml`):
-1. Pentru o versiune nouă se schimbă: `custom_components/centrometal_boiler/manifest.json` (`version`), badge-ul și titlul din `README.md`, `tests/test_repository_layout.py` (versiunea așteptată) și o secțiune nouă `## X.Y.Z — ...` în `CHANGELOG.md`.
-2. La push în `main`, workflow-ul vede că `vX.Y.Z` nu există încă, rulează Validate, Hassfest și HACS, apoi creează tag-ul și release-ul cu notele din secțiunea respectivă din CHANGELOG. Fără secțiune în CHANGELOG, release-ul nu se face.
-3. Un push în `main` fără schimbare de versiune nu creează nimic.
-4. O versiune cu sufix (de ex. `1.2.0b1`) iese ca pre-release.
-5. În HA: HACS → Update information → instalare → repornire (sau manual, din arhiva release-ului).
+**Releases are automatic** (`.github/workflows/release.yml`):
+1. A new version changes `custom_components/centrometal_boiler/manifest.json` (`version`), the badge and heading in `README.md`, `tests/test_repository_layout.py` (the expected version) and adds a `## X.Y.Z — ...` section to `CHANGELOG.md`.
+2. On a push to `main`, the workflow sees that `vX.Y.Z` does not exist yet, runs Validate, Hassfest and HACS, then creates the tag and the release with the notes from that CHANGELOG section. Without a CHANGELOG section there is no release.
+3. A push to `main` without a version change creates nothing.
+4. A version with a suffix (for example `1.2.0b1`) is published as a pre-release.
+5. In Home Assistant: HACS → Update information → install → restart (or manually, from the release archive).
 
-Sesiunile Claude nu pot crea ele însele release-uri sau tag-uri (GitHub refuză pentru acest tip de sesiune); workflow-ul le creează cu token-ul repo-ului.
+Claude sessions cannot create releases or tags themselves (GitHub refuses them for this session type); the workflow creates them with the repository's own token.
 
-Istoric:
-- **0.2.0.11**: release vechi din `main`.
-- **0.2.0.20**: importat din zip, PR-ul [Internetrevizor/hass-centrometal-boiler#1](https://github.com/Internetrevizor/hass-centrometal-boiler/pull/1) intrat în `main`, release publicat pe 26.09.2026.
-- **0.2.0.21**: doar pe branch (commit-urile `2c0575a` și `9c5bace`), nepublicat separat; intră în 1.0.0.
-- **1.0.0**: release independent (atribuire, `NOTICE`, fișierele interne excluse din release), fără schimbări de entități față de 0.2.0.21. Merge în `main` prin PR, apoi release din `main`.
-- **1.1.0**: funcții din celelalte fork-uri (BioTec-Plus, opțiunea de prefix, traduceri fr/ro, `tests_ha/`), corectura `websockets`, documentația HACS. PR #3, release publicat manual pe 22.10.2026.
-- **După 1.1.0**: release automat la push în `main` (`release.yml`) și push direct în `main` pentru modificările aprobate. De menționat în CHANGELOG la următoarea versiune.
+History:
+- **0.2.0.11**: old release from `main`.
+- **0.2.0.20**: imported from a zip, pull request #1 merged into `main`, release published on 26.09.2026.
+- **0.2.0.21**: on the branch only, never released on its own; part of 1.0.0.
+- **1.0.0**: independent release (credits, `NOTICE`, internal files kept out of releases), no entity changes compared with 0.2.0.21. Merged into `main` through pull request #2.
+- **1.1.0**: features from the other forks (BioTec-Plus, prefix option, fr/ro translations, `tests_ha/`), the `websockets` fix, the HACS documentation. Pull request #3, released by hand on 22.10.2026.
+- **After 1.1.0**: automatic releases on a push to `main` (`release.yml`) and direct pushes to `main` for approved changes; personal data removed from the code and from the git history (24.10.2026, see section 11). To be mentioned in the CHANGELOG with the next version.
 
-## 8. Dezvoltare și teste
+## 8. Development and tests
 
-- Testele au nevoie de Home Assistant instalat. Fără el, 10 module de test nu se pot încărca și sunt sărite în tăcere.
-- Local: Python 3.13 + `pip install homeassistant aiohttp pytest pytest-asyncio ruff "websockets>=13.1" "certifi>=2024.7.4" voluptuous`, apoi `ruff check .` și `pytest`.
-- **Teste în Home Assistant real** (`tests_ha/`): integrarea rulează în HA (pytest-homeassistant-custom-component), contra unui portal Centrometal simulat (`tests_ha/fake_centrometal.py`: site + broker STOMP; pot fi împinse valori în timp real, simulată o cădere sau o sesiune expirată). Într-un mediu separat: `pip install -r tests_ha/requirements.txt`, apoi `pytest -c tests_ha/pytest.ini tests_ha`.
-- CI (`.github/workflows/validate.yml`): jobul `python` (Python 3.14, testele unitare) și jobul `home-assistant` (Python 3.13, `tests_ha/`).
-- Fixture-uri: `tests/fixtures/peltec2_lambda_real_snapshot.json` și `..._http_snapshot.json` (ambele cu `B_KONF` 12, adică schema 13). Nu se știe de unde provin: proprietarul nu le recunoaște, iar instalația lui e pe schema 43.
+- The tests need Home Assistant installed. Without it, ten test modules cannot be imported and are silently skipped.
+- Locally: Python 3.13 + `pip install homeassistant aiohttp pytest pytest-asyncio ruff "websockets>=13.1" "certifi>=2024.7.4" voluptuous`, then `ruff check .` and `pytest`.
+- **Tests in a real Home Assistant** (`tests_ha/`): the integration runs in Home Assistant (pytest-homeassistant-custom-component) against a fake Centrometal cloud (`tests_ha/fake_centrometal.py`: website + STOMP broker; it can push realtime values and simulate an outage or an expired session). In a separate environment: `pip install -r tests_ha/requirements.txt`, then `pytest -c tests_ha/pytest.ini tests_ha`.
+- CI (`.github/workflows/validate.yml`): the `python` job (Python 3.14, unit tests) and the `home-assistant` job (Python 3.13, `tests_ha/`).
+- Fixtures: `tests/fixtures/peltec2_lambda_real_snapshot.json` and `..._http_snapshot.json` (both with `B_KONF` 12, i.e. scheme 13). Their origin is unclear: the owner does not recognise them, and the owner's installation is on scheme 43.
 
-## 9. Subiecte deschise
+## 9. Open items
 
-1. **`B_REO` („DHW Recirculation Pump”) față de P2**: pe PelTec II, pompa de recirculare e legată mereu la un releu P (manualul o trece pe P1–P4 în fiecare schemă cu recirculare), deci `B_REO` dublează probabil „P2 DHW Recirculation Pump (K1)”. Proprietarul înclina spre „doar pompele `B_P`, nu `B_RE`”. Modificarea a fost schițată (scoaterea `B_REO` din tabela PelTec II; PelTec-ul vechi îl păstrează; `B_REC` rămâne) și apoi oprită: **neaplicată, de discutat**.
-2. Publicarea release-ului v1.0.0 și verificarea pe HA-ul real: numele pompelor, entitatea Configuration, o ardere completă S0 → D → S7.
-3. Actualizarea automatizărilor care compară textele vechi ale stărilor (tabelul de la punctul 4).
-4. Fixture-urile cu `B_KONF` 12, de origine necunoscută.
-5. Includerea în lista implicită HACS (vezi secțiunea 10): de trimis după release-ul 1.1.0.
+1. **`B_REO` ("DHW Recirculation Pump") versus P2**: on a PelTec II the recirculation pump is always wired to a P relay (the manual puts it on one of P1–P4 in every scheme that has one), so `B_REO` probably duplicates "P2 DHW Recirculation Pump (K1)". The owner leaned towards "only the `B_P` pumps, not `B_RE`". The change was drafted (drop `B_REO` from the PelTec II table; the older PelTec keeps it; `B_REC` stays) and then stopped: **not applied, to be discussed**.
+2. Check 1.1.0 on the real Home Assistant: the pump names, the Configuration entity, a full burn S0 → D → S7.
+3. Update the automations that compare the old stage texts (the table in section 4).
+4. The fixtures with `B_KONF` 12, of unclear origin.
+5. Inclusion in the HACS default list (section 10): to be submitted by the owner.
+6. Ask GitHub Support to purge the old commits still reachable through pull requests #1–#3 (section 11).
 
-## 10. Includerea în lista implicită HACS
+## 10. Inclusion in the HACS default list
 
-Lista e repo-ul `hacs/default`; cererea o trimite proprietarul, din contul lui (verificarea „owner” cere ca autorul PR-ului să fie proprietarul repo-ului).
+The list is the `hacs/default` repository; the owner submits the request from their own account (the "owner" check requires the pull request author to own the repository).
 
-Stare la 22.10.2026:
-- Condițiile tehnice sunt îndeplinite: repo public, descriere și topicuri, issues activ, acțiunea HACS fără `ignore`, Hassfest, release publicat.
-- **Integrarea originală `9a4gl/hass-centrometal-boiler` e deja în listă, cu același domeniu `centrometal_boiler`.** Verificările automate HACS nu blochează asta (verifică doar conflictul cu integrările oficiale din Home Assistant); decid cei care revizuiesc cererea. De spus deschis în cerere.
+Status on 22.10.2026:
+- The technical requirements are met: public repository, description and topics, issues enabled, HACS action without `ignore`, Hassfest, a published release. No separate PyPI library is required (that rule applies only to Home Assistant core integrations).
+- **The original `9a4gl/hass-centrometal-boiler` is already listed, with the same `centrometal_boiler` domain.** The automatic HACS checks do not block this (they only check for a conflict with Home Assistant core integrations); the reviewers decide. Say so openly in the request.
 
-Pași:
-1. Release nou publicat **după** ce acțiunile HACS și Hassfest au trecut pe acel commit.
-2. Fork la `https://github.com/hacs/default`.
-3. În fișierul `integration`, adăugat `"Internetrevizor/hass-centrometal-boiler",` în ordine alfabetică (fără să conteze majusculele): între `"intelliThings-official/home-assistant-intellithings",` și `"InTheDaylight14/nginx-proxy-manager-switches",`.
-4. PR spre `hacs/default` cu șablonul lor completat (link la release, la o rulare reușită a acțiunii HACS și a Hassfest). Nu se cer review-uri explicit: șablonul spune că PR-ul e închis dacă o faci.
+Steps:
+1. A new release published **after** the HACS and Hassfest actions passed on that commit.
+2. Fork `https://github.com/hacs/default` and create a new branch from `master`.
+3. In the `integration` file, add `"Internetrevizor/hass-centrometal-boiler",` in alphabetical order (case-insensitive): between `"intelliThings-official/home-assistant-intellithings",` and `"InTheDaylight14/nginx-proxy-manager-switches",`.
+4. Open a pull request to `hacs/default` with their template filled in (links to the release and to successful HACS and Hassfest runs), with "Allow edits by maintainers" on. Do not request reviews: the template says the pull request is closed if you do.
 
+## 11. Personal data
+
+Nothing that identifies the owner belongs in the repository: no e-mail addresses, serial numbers, portal installation ids, real locations, file names or credentials. Tests and fixtures use placeholders (`SN000001`, id `1001`, "Example City", `USR:PelTec II - Example`).
+
+On 24.10.2026, at the owner's request:
+- the code was cleaned (the fixtures' controller file name, a controller serial and the portal installation id used across the tests, an invented city in the fake cloud);
+- the git history was rewritten to remove the same values from every past commit and to replace the owner's personal e-mail in commit metadata with their GitHub `noreply` address; `main` was force-pushed once for this, with the owner's explicit approval;
+- the old releases and tags were deleted by the owner and v1.1.0 was recreated by the release workflow on the rewritten history.
+
+GitHub keeps the old commits reachable through the pull-request pages (#1–#3) until GitHub Support removes them. For new commits the owner enables *Settings → Emails → Keep my email addresses private* and *Block command line pushes that expose my email*.
