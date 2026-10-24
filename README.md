@@ -4,7 +4,7 @@
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 
-A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box.
+A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box or integrated WiFi Controller.
 
 ## PelTec II behavior in 1.1.0
 
