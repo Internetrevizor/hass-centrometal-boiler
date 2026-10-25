@@ -1,6 +1,6 @@
 # Centrometal Boiler System integration guide (PelTec II Lambda)
 
-Status on 24.10.2026, version **1.1.0**: an independent project that began as a fork of `9a4gl/hass-centrometal-boiler` (Tihomir Heidelberg, Apache 2.0, credited in `README.md` and `NOTICE`).
+Status on 25.10.2026, version **1.1.1**: an independent project that began as a fork of `9a4gl/hass-centrometal-boiler` (Tihomir Heidelberg, Apache 2.0, credited in `README.md` and `NOTICE`).
 
 This guide and `CLAUDE.md` are internal notes: they stay in the repository, but `.gitattributes` keeps them out of every release archive, and HACS installs only `custom_components/` anyway. The owner reads and writes in Romanian; replies to the owner are in Romanian, while everything in the repository is in English.
 
@@ -143,8 +143,8 @@ History:
 - **0.2.0.20**: imported from a zip, pull request #1 merged into `main`, release published on 26.09.2026.
 - **0.2.0.21**: on the branch only, never released on its own; part of 1.0.0.
 - **1.0.0**: independent release (credits, `NOTICE`, internal files kept out of releases), no entity changes compared with 0.2.0.21. Merged into `main` through pull request #2.
-- **1.1.0**: features from the other forks (BioTec-Plus, prefix option, fr/ro translations, `tests_ha/`), the `websockets` fix, the HACS documentation. Pull request #3, released by hand on 22.10.2026.
-- **After 1.1.0**: automatic releases on a push to `main` (`release.yml`) and direct pushes to `main` for approved changes; personal data removed from the code and from the git history (24.10.2026, see section 11). To be mentioned in the CHANGELOG with the next version.
+- **1.1.0**: features from the other forks (BioTec-Plus, prefix option, fr/ro translations, `tests_ha/`), the `websockets` fix, the HACS documentation. Pull request #3, released by hand on 22.10.2026; re-published by the release workflow on 24.10.2026 after the history rewrite (section 11).
+- **1.1.1** (25.10.2026): editable settings the portal reports late fill in without a restart (section 9, item 7). First version committed straight to `main` and released by the workflow. Its CHANGELOG section also records the automatic releases and the history rewrite.
 
 ## 8. Development and tests
 
@@ -162,6 +162,7 @@ History:
 4. The fixtures with `B_KONF` 12, of unclear origin.
 5. Inclusion in the HACS default list (section 10): to be submitted by the owner.
 6. Ask GitHub Support to purge the old commits still reachable through pull requests #1–#3 (section 11).
+7. **Settings 71, 291 and 292 after a restart.** The owner's diagnostics of 25.10.2026: for sixteen hours after the Home Assistant restart of 24.10 the portal's status snapshot carried settings 576, 67, 68 and 70 but nothing for 71, 291 and 292, although parameter-list listed all seven rows (291 and 292 with `ask: funcParametersPeltec2`). The owner confirmed they appear once the settings page is opened on the portal website. 1.1.1 fills them in whenever they arrive; before it, the entities stayed unavailable until the next restart. Still open: having the integration ask for them itself at startup. That needs the request the portal page sends (browser DevTools → Network, the payload without cookies); neither the original client library nor the AndroFlo one has a confirmed request for it (both carry an unused `PRD … VAL/ALV` table read). Alternative to discuss: remember the last known values across restarts.
 
 ## 10. Inclusion in the HACS default list
 

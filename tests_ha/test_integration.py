@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
@@ -10,7 +12,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from .conftest import DOMAIN
-from .fake_centrometal import BIOTEC_PLUS, EMAIL, PASSWORD, wait_until
+from .fake_centrometal import BIOTEC_PLUS, EMAIL, PASSWORD, PELTEC2, wait_until
 
 
 async def _setup(hass, entry) -> None:
@@ -82,6 +84,34 @@ async def test_expired_session_is_recovered_after_a_failed_command(hass, entry, 
     assert website.session_expired is False
     await hass.services.async_call("number", "set_value", {"entity_id": entity_id, "value": 71}, blocking=True)
     assert {"cmd-name": "PWR 67", "cmd-value": 71} in website.commands_to(1001)
+
+
+# Slot 71 listed by parameter-list but missing from the status snapshot, as on
+# the maintainer's boiler after a Home Assistant restart.
+PELTEC2_LATE_SLOT = copy.deepcopy(PELTEC2)
+PELTEC2_LATE_SLOT["parameter_list"]["parameters"][0]["list"].append(
+    {
+        "dbindex": 71,
+        "naslov": "Stop buffer tank temperature",
+        "tip": "temperatura",
+        "user": "rw",
+        "showButton": True,
+        "sufix": "°C",
+    }
+)
+
+
+@pytest.mark.parametrize("boilers", [[PELTEC2_LATE_SLOT]])
+async def test_a_setting_reported_after_setup_fills_in(hass, entry, broker):
+    await _setup(hass, entry)
+    entity_id = _entity_id(hass, "number", "PT2SERIAL_setting_71")
+    assert hass.states.get(entity_id).state == "unavailable"
+
+    await broker.publish("peltec2", "PT2SERIAL", {"PVAL_71_0": "8", "PMIN_71_0": "5", "PMAX_71_0": "20"})
+    await wait_until(lambda: hass.states.get(entity_id).state != "unavailable")
+    state = hass.states.get(entity_id)
+    assert float(state.state) == 8
+    assert (state.attributes["min"], state.attributes["max"]) == (5, 20)
 
 
 async def test_broker_restart_marks_the_connection_lost(hass, entry, broker):

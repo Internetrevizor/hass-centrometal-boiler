@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from custom_components.centrometal_boiler.centrometal_web_boiler.WebBoilerDeviceCollection import (  # noqa: E402
     WebBoilerDevice,
+    WebBoilerDeviceCollection,
 )
 from custom_components.centrometal_boiler.number import WebBoilerSettingNumber  # noqa: E402
 from custom_components.centrometal_boiler.sensors.generic_sensors_all import (  # noqa: E402
@@ -57,6 +58,7 @@ class _Client:
         self.accepted = accepted
         self.calls: list[tuple] = []
         self.refreshes = 0
+        self.data = WebBoilerDeviceCollection("user@example.com")
 
     def has_fresh_data(self) -> bool:
         return True
@@ -190,6 +192,89 @@ def test_a_tenth_resolution_row_is_still_bounded_by_the_controller() -> None:
 def test_a_slot_without_bounds_is_unavailable_rather_than_writable() -> None:
     entity = _number(_Client(), {"PVAL_67_0": "67"})
     assert entity.available is False
+
+
+STOP_BUFFER_ROW = {**EDITABLE_ROW, "dbindex": 71, "naslov": "Stop buffer tank temperature"}
+
+
+def _watched_number(slots: dict[str, str], row=STOP_BUFFER_ROW):
+    """A setting entity added to Home Assistant, with its state writes counted."""
+    client = _Client()
+    device = _device(client, slots, rows=(row,))
+    client.data[device["serial"]] = device
+    entity = WebBoilerSettingNumber(None, device, row)
+    writes: list[float | None] = []
+    entity.async_write_ha_state = lambda: writes.append(entity.native_value)
+    return client, device, entity, writes
+
+
+def test_a_slot_the_portal_reports_after_setup_fills_the_entity_in() -> None:
+    """Seen on a PelTec II Lambda: slots 71, 291 and 292 were missing from the
+    status snapshot after a restart and arrived only once the portal website
+    was opened. The entity has to pick them up then, not at the next restart."""
+
+    async def runner() -> None:
+        client, _device_, entity, writes = _watched_number({})
+        await entity.async_added_to_hass()
+        assert entity.available is False
+
+        status = {"PVAL_71_0": "8", "PMIN_71_0": "5", "PMAX_71_0": "20", "PDEF_71_0": "10"}
+        await client.data.parse_installation_statuses(
+            {"1001": {"params": {name: {"v": value, "ut": 1} for name, value in status.items()}}}
+        )
+        assert entity.available is True
+        assert (entity.native_value, entity.native_min_value, entity.native_max_value) == (8, 5, 20)
+        assert writes and writes[-1] == 8
+
+    asyncio.run(runner())
+
+
+def test_a_late_slot_keeps_updating_after_it_first_arrived() -> None:
+    async def runner() -> None:
+        client, device, entity, writes = _watched_number({})
+        await entity.async_added_to_hass()
+        await client.data._update_device_with_real_time_data(
+            device, '{"PVAL_71_0": "8", "PMIN_71_0": "5", "PMAX_71_0": "20"}'
+        )
+        writes.clear()
+
+        await client.data._update_device_with_real_time_data(device, '{"PVAL_71_0": "9"}')
+        assert entity.native_value == 9
+        # One write, from the slot's own listener; the late-arrival path only
+        # acts on a parameter it has not hooked yet.
+        assert writes == [9]
+
+    asyncio.run(runner())
+
+
+def test_another_slot_or_device_does_not_wake_the_entity() -> None:
+    async def runner() -> None:
+        client, device, entity, writes = _watched_number({})
+        await entity.async_added_to_hass()
+        other = _device(client, {}, rows=(STOP_BUFFER_ROW,))
+        other["id"] = 1002
+        other["serial"] = "SN2"
+        client.data[other["serial"]] = other
+
+        await client.data._update_device_with_real_time_data(device, '{"PVAL_67_0": "66"}')
+        await client.data._update_device_with_real_time_data(other, '{"PVAL_71_0": "8"}')
+        assert writes == []
+        assert entity.available is False
+
+    asyncio.run(runner())
+
+
+def test_a_removed_entity_stops_listening() -> None:
+    async def runner() -> None:
+        client, device, entity, writes = _watched_number({"PVAL_71_0": "8", "PMIN_71_0": "5"})
+        await entity.async_added_to_hass()
+        await entity.async_will_remove_from_hass()
+
+        await client.data._update_device_with_real_time_data(device, '{"PVAL_71_0": "9", "PMAX_71_0": "20"}')
+        assert writes == []
+        assert entity.unique_id not in client.data.on_update_callbacks
+
+    asyncio.run(runner())
 
 
 def test_an_editable_slot_does_not_also_become_a_read_only_sensor() -> None:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 — editable settings fill in when the portal reports them late
+
+- **An editable setting no longer stays unavailable until the next restart when the portal reports it late.** After a Home Assistant restart on the maintainer's PelTec II Lambda (v3.03dL, scheme 43), the portal's status snapshot carried settings 576, 67, 68 and 70 but not 71 (Stop buffer tank temperature), 291 (DHW temperature, K1 circuit) or 292 (DHW difference, K1 circuit) for sixteen hours, although all seven rows were listed; they arrived only once the settings page was opened on the portal website. The number entity listened only to the values that existed when it was created, so it stayed unavailable even after they arrived. It now fills in whenever a setting's value and bounds arrive, over HTTP or in realtime. The behaviour dated from 0.2.0.20, when the number platform was added. No entity, entity ID, name or state text changes.
+- Releases are now published by a workflow on `main`, after Validate, Hassfest and HACS pass.
+- The repository's git history was rewritten on 24.10.2026 to remove personal data from test files and commit metadata; the tests use placeholders. Commit hashes from before that date changed, release v1.1.0 was re-published on the rewritten history and v1.0.0 was withdrawn. A clone made before that date should be replaced by a fresh one.
+
 ## 1.1.0 — features from the other forks
 
 Collected from the other forks of the original integration. Nothing changes on a PelTec II unless the new naming option is switched off: no entity, entity ID or state text differs from 1.0.0.

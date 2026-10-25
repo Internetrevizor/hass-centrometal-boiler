@@ -14,6 +14,13 @@ Bounds come from the controller's own ``PMIN``/``PMAX`` slots rather than from
 anything hard-coded here, so Home Assistant refuses a value the controller
 would have rejected, and a firmware that widens a range is followed
 automatically.
+
+The portal does not always report a slot. On a PelTec II Lambda (v3.03dL,
+scheme 43) the status snapshot carried slots 576, 67, 68 and 70 but not 71,
+291 or 292 for sixteen hours after a Home Assistant restart, although
+parameter-list listed all seven rows; they arrived only once the owner opened
+the settings page on the portal website. An entity whose slot is missing at
+setup therefore keeps watching for it, and fills in whenever it arrives.
 """
 
 from __future__ import annotations
@@ -119,6 +126,10 @@ class WebBoilerSettingNumber(NumberEntity):
             "minimum": f"PMIN_{self._dbindex}_0",
             "maximum": f"PMAX_{self._dbindex}_0",
         }
+        self._slot_names = frozenset(self._param_names.values())
+        # Slot parameters this entity listens to. One the portal did not report
+        # at setup is added when it first arrives.
+        self._hooked: set[str] = set()
 
     def _parameter(self, role: str):
         """Read a slot parameter without creating a placeholder for it."""
@@ -134,17 +145,36 @@ class WebBoilerSettingNumber(NumberEntity):
             # "?" -- the placeholder a slot carries before it is ever reported.
             return None
 
-    async def async_added_to_hass(self) -> None:
-        for name in self._param_names.values():
+    def _hook_slot_parameters(self) -> bool:
+        """Listen to every slot parameter the device has; True if any was new."""
+        added = False
+        for name in self._slot_names - self._hooked:
             parameter = self._device.get("parameters", {}).get(name)
             if parameter is not None:
                 parameter.set_update_callback(self.update_callback, self._callback_key)
+                self._hooked.add(name)
+                added = True
+        return added
+
+    async def async_added_to_hass(self) -> None:
+        self._hook_slot_parameters()
+        # A parameter created after setup has no listener of its own yet, so the
+        # first value of a late slot is only seen here, through the collection.
+        self.web_boiler_client.data.set_on_update_callback(self._parameter_arrived, self._unique_id)
 
     async def async_will_remove_from_hass(self) -> None:
-        for name in self._param_names.values():
+        self.web_boiler_client.data.set_on_update_callback(None, self._unique_id)
+        for name in self._hooked:
             parameter = self._device.get("parameters", {}).get(name)
             if parameter is not None:
                 parameter.set_update_callback(None, self._callback_key)
+        self._hooked.clear()
+
+    async def _parameter_arrived(self, device, parameter, _create: bool = False) -> None:
+        if device is not self._device or parameter.get("name") not in self._slot_names:
+            return
+        if self._hook_slot_parameters():
+            self.async_write_ha_state()
 
     async def update_callback(self, _parameter) -> None:
         self.async_write_ha_state()
