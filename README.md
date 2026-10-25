@@ -1,16 +1,16 @@
 # Centrometal Boiler System for Home Assistant
 
-![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)
+![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)
 
 A Home Assistant custom integration for Centrometal Web Boiler cloud-connected heating systems using the CM WiFi-Box or integrated WiFi Controller.
 
-## PelTec II behavior in 1.1.1
+## PelTec II behavior in 1.1.2
 
 PelTec II entities are created from a strict allowlist verified against an authenticated portal HTTP and WebSocket capture. Raw, hidden, duplicated, or unverified controller fields are not created as Home Assistant entities.
 
-Editable settings are written with the portal's own command, and Home Assistant refuses a value outside the range the controller reports for that setting. Each setting keeps the resolution the portal gives it: whole degrees for the boiler and buffer rows, tenths for the DHW rows. The portal does not always send every setting: on a PelTec II Lambda, some reach Home Assistant only after the settings page has been opened on the portal website. Such a setting is unavailable until its value arrives and fills in as soon as it does, without a reload; opening that page on the portal brings it in.
+Editable settings are written with the portal's own command, and Home Assistant refuses a value outside the range the controller reports for that setting. Each setting keeps the resolution the portal gives it: whole degrees for the boiler and buffer rows, tenths for the DHW rows. The portal does not always send every setting: on a PelTec II Lambda, some reach Home Assistant only after the settings page has been opened on the portal website. Until then a setting shows the last value and bounds Home Assistant saw before the restart, with a `Restored: true` attribute; the value from the portal replaces it as soon as it arrives, without a reload. A setting that has never been reported since installing this version is unavailable until it is; opening that page on the portal brings it in.
 
 The integration does not create or load schedule, weather, or notification entities. Schedule values received inside the main boiler status stream are discarded before they enter the device parameter cache. Weather groups from the parameter-list response are discarded. There is no option to enable either feature.
 

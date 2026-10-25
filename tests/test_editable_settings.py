@@ -15,6 +15,7 @@ than a scaled integer.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from custom_components.centrometal_boiler.centrometal_web_boiler.WebBoilerDevice
     WebBoilerDevice,
     WebBoilerDeviceCollection,
 )
-from custom_components.centrometal_boiler.number import WebBoilerSettingNumber  # noqa: E402
+from custom_components.centrometal_boiler.number import SettingStoredData, WebBoilerSettingNumber  # noqa: E402
 from custom_components.centrometal_boiler.sensors.generic_sensors_all import (  # noqa: E402
     get_generic_temperature_settings_sensors,
     is_editable_setting,
@@ -197,14 +198,25 @@ def test_a_slot_without_bounds_is_unavailable_rather_than_writable() -> None:
 STOP_BUFFER_ROW = {**EDITABLE_ROW, "dbindex": 71, "naslov": "Stop buffer tank temperature"}
 
 
-def _watched_number(slots: dict[str, str], row=STOP_BUFFER_ROW):
-    """A setting entity added to Home Assistant, with its state writes counted."""
+def _watched_number(slots: dict[str, str], row=STOP_BUFFER_ROW, restored: dict | None = None):
+    """A setting entity added to Home Assistant, with its state writes counted.
+
+    ``restored`` is what the previous run saved for it, as Home Assistant hands
+    it back after a restart.
+    """
+    from homeassistant.helpers.restore_state import RestoredExtraData
+
     client = _Client()
     device = _device(client, slots, rows=(row,))
     client.data[device["serial"]] = device
     entity = WebBoilerSettingNumber(None, device, row)
     writes: list[float | None] = []
     entity.async_write_ha_state = lambda: writes.append(entity.native_value)
+
+    async def last_extra_data():
+        return None if restored is None else RestoredExtraData(json.loads(json.dumps(restored)))
+
+    entity.async_get_last_extra_data = last_extra_data
     return client, device, entity, writes
 
 
@@ -312,3 +324,99 @@ def setting_icon_for(title: str) -> str:
     from custom_components.centrometal_boiler.number import setting_icon
 
     return setting_icon(9999, title)
+
+
+SAVED_STOP_BUFFER = {"value": 8.0, "minimum": 5.0, "maximum": 20.0, "default": 10.0, "timestamp": 1792771951}
+
+
+def test_after_a_restart_a_setting_shows_its_last_known_value() -> None:
+    """The portal may not report a slot after a restart until its settings page
+    is opened. Meanwhile the entity shows what it last saw, and says so."""
+
+    async def runner() -> None:
+        _client, _device_, entity, _writes = _watched_number({}, restored=SAVED_STOP_BUFFER)
+        await entity.async_added_to_hass()
+        assert entity.available is True
+        assert (entity.native_value, entity.native_min_value, entity.native_max_value) == (8, 5, 20)
+        attributes = entity.extra_state_attributes
+        assert attributes["Restored"] is True
+        assert attributes["Default"] == 10
+
+    asyncio.run(runner())
+
+
+def test_a_value_from_the_portal_replaces_the_restored_one() -> None:
+    async def runner() -> None:
+        client, device, entity, writes = _watched_number({}, restored=SAVED_STOP_BUFFER)
+        await entity.async_added_to_hass()
+        await client.data._update_device_with_real_time_data(
+            device, '{"PVAL_71_0": "9", "PMIN_71_0": "5", "PMAX_71_0": "20"}'
+        )
+        assert entity.native_value == 9
+        assert "Restored" not in entity.extra_state_attributes
+        assert writes and writes[-1] == 9
+
+    asyncio.run(runner())
+
+
+def test_a_slot_reported_at_setup_is_never_marked_restored() -> None:
+    async def runner() -> None:
+        _client, _device_, entity, _writes = _watched_number(
+            {"PVAL_71_0": "7", "PMIN_71_0": "5", "PMAX_71_0": "20"}, restored=SAVED_STOP_BUFFER
+        )
+        await entity.async_added_to_hass()
+        assert entity.native_value == 7
+        assert "Restored" not in entity.extra_state_attributes
+
+    asyncio.run(runner())
+
+
+def test_what_is_saved_for_the_next_restart() -> None:
+    async def runner() -> None:
+        # Reported by the portal: saved as reported.
+        _client, _device_, entity, _writes = _watched_number({"PVAL_71_0": "8", "PMIN_71_0": "5", "PMAX_71_0": "20"})
+        await entity.async_added_to_hass()
+        assert entity.extra_restore_state_data.as_dict() == {
+            "value": 8.0,
+            "minimum": 5.0,
+            "maximum": 20.0,
+            "default": None,
+            "timestamp": None,
+        }
+        # Not reported since the restart: the restored values are saved again,
+        # so a second restart before the portal reports the slot keeps them.
+        _client, _device_, entity, _writes = _watched_number({}, restored=SAVED_STOP_BUFFER)
+        await entity.async_added_to_hass()
+        assert entity.extra_restore_state_data.as_dict() == SAVED_STOP_BUFFER
+
+    asyncio.run(runner())
+
+
+def test_saved_data_survives_the_json_round_trip() -> None:
+    saved = SettingStoredData(value=54.8, minimum=40.0, maximum=85.0, default=50.0, timestamp=1792771951)
+    assert SettingStoredData.from_dict(json.loads(json.dumps(saved.as_dict()))) == saved
+
+
+def test_incomplete_or_malformed_saved_data_is_not_used() -> None:
+    async def runner(restored: dict) -> bool:
+        _client, _device_, entity, _writes = _watched_number({}, restored=restored)
+        await entity.async_added_to_hass()
+        return entity.available
+
+    # Without bounds it was not writable when saved; text is not a number.
+    assert asyncio.run(runner({**SAVED_STOP_BUFFER, "minimum": None})) is False
+    assert asyncio.run(runner({**SAVED_STOP_BUFFER, "maximum": None})) is False
+    assert asyncio.run(runner({**SAVED_STOP_BUFFER, "value": "8"})) is False
+    assert asyncio.run(runner({"something": "else"})) is False
+
+
+def test_a_restored_setting_is_still_bounded_when_written() -> None:
+    async def runner() -> None:
+        client, _device_, entity, _writes = _watched_number({}, restored=SAVED_STOP_BUFFER)
+        await entity.async_added_to_hass()
+        with pytest.raises(Exception, match="outside the range"):
+            await entity.async_set_native_value(25)
+        await entity.async_set_native_value(9)
+        assert client.calls == [("SN1", 71, 9)]
+
+    asyncio.run(runner())

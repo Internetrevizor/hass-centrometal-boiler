@@ -66,7 +66,7 @@ Examples of internal-only values include `B_addConf`, `B_Inp1`, and `B_cm2k`. `B
 
 `CNT_0` is Boiler Work + Standby Time and `CNT_15` is Boiler Work Time. Both are cumulative minute counters; the remaining counter mappings are unchanged.
 
-Editable controller settings (`PVAL_*` rows the account may change) are `number` entities, bounded by the controller's own `PMIN`/`PMAX`; read-only rows stay sensors. Fan speed (`B_fan`, `B_fanB`, `B_fanO`, `B_rpm`) is not exposed: the controller does not publish it to the portal, so the entity could only show a frozen zero.
+Editable controller settings (`PVAL_*` rows the account may change) are `number` entities, bounded by the controller's own `PMIN`/`PMAX`; read-only rows stay sensors. Attributes: `Setting index`, `Default`, `Last updated`, and `Restored: true` while the value shown is the last one seen before a restart because the portal has not reported the setting since. Fan speed (`B_fan`, `B_fanB`, `B_fanO`, `B_rpm`) is not exposed: the controller does not publish it to the portal, so the entity could only show a frozen zero.
 
 ## Other families
 

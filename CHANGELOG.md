@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2 — editable settings keep their last value across a restart
+
+- **After a restart, an editable setting the portal has not reported yet shows its last known value instead of being unavailable.** On the maintainer's PelTec II Lambda, settings 71, 291 and 292 reach Home Assistant after a restart only once the settings page has been opened on the portal website (see 1.1.1). The number entity now keeps the last value, bounds, default and change time it saw in Home Assistant's restore-state store, and shows them until the portal reports the setting, marked with a `Restored: true` attribute. The value from the portal replaces it as soon as it arrives. Nothing is sent to the boiler to obtain it.
+- Writing a restored setting is bounded by the restored minimum and maximum, the controller's own limits.
+- The first restart after installing has nothing saved yet: a setting the portal does not report then stays unavailable until it does, as before. From then on it is kept.
+- No entity, entity ID, name or state text changes.
+
 ## 1.1.1 — editable settings fill in when the portal reports them late
 
 - **An editable setting no longer stays unavailable until the next restart when the portal reports it late.** After a Home Assistant restart on the maintainer's PelTec II Lambda (v3.03dL, scheme 43), the portal's status snapshot carried settings 576, 67, 68 and 70 but not 71 (Stop buffer tank temperature), 291 (DHW temperature, K1 circuit) or 292 (DHW difference, K1 circuit) for sixteen hours, although all seven rows were listed; they arrived only once the settings page was opened on the portal website. The number entity listened only to the values that existed when it was created, so it stayed unavailable even after they arrived. It now fills in whenever a setting's value and bounds arrive, over HTTP or in realtime. The behaviour dated from 0.2.0.20, when the number platform was added. No entity, entity ID, name or state text changes.

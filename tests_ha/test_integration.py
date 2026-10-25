@@ -6,10 +6,11 @@ import copy
 
 import pytest
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
+from homeassistant.core import State
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, mock_restore_cache_with_extra_data
 
 from .conftest import DOMAIN
 from .fake_centrometal import BIOTEC_PLUS, EMAIL, PASSWORD, PELTEC2, wait_until
@@ -112,6 +113,26 @@ async def test_a_setting_reported_after_setup_fills_in(hass, entry, broker):
     state = hass.states.get(entity_id)
     assert float(state.state) == 8
     assert (state.attributes["min"], state.attributes["max"]) == (5, 20)
+
+
+@pytest.mark.parametrize("boilers", [[PELTEC2_LATE_SLOT]])
+async def test_a_setting_keeps_its_last_value_across_a_restart(hass, entry, broker):
+    entity_id = "number.peltec_ii_lambda_stop_buffer_tank_temperature"
+    saved = {"value": 8.0, "minimum": 5.0, "maximum": 20.0, "default": 10.0, "timestamp": None}
+    mock_restore_cache_with_extra_data(hass, [(State(entity_id, "8.0"), saved)])
+    await _setup(hass, entry)
+    assert _entity_id(hass, "number", "PT2SERIAL_setting_71") == entity_id
+
+    # The portal has not reported slot 71 in this run: the last known value.
+    state = hass.states.get(entity_id)
+    assert float(state.state) == 8
+    assert state.attributes["Restored"] is True
+    assert (state.attributes["min"], state.attributes["max"]) == (5, 20)
+
+    # Reported by the portal: the live value takes over.
+    await broker.publish("peltec2", "PT2SERIAL", {"PVAL_71_0": "9", "PMIN_71_0": "5", "PMAX_71_0": "20"})
+    await wait_until(lambda: hass.states.get(entity_id).state == "9.0")
+    assert "Restored" not in hass.states.get(entity_id).attributes
 
 
 async def test_broker_restart_marks_the_connection_lost(hass, entry, broker):

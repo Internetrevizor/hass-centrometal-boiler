@@ -21,16 +21,22 @@ scheme 43) the status snapshot carried slots 576, 67, 68 and 70 but not 71,
 parameter-list listed all seven rows; they arrived only once the owner opened
 the settings page on the portal website. An entity whose slot is missing at
 setup therefore keeps watching for it, and fills in whenever it arrives.
+
+Until then it shows the value and bounds it last saw, kept across restarts by
+Home Assistant's restore-state store and marked with a ``Restored`` attribute.
+A value reported by the portal always replaces the restored one.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
 from .centrometal_web_boiler import HttpClientAuthError
 from .common import create_device_info, format_name, format_time
@@ -89,6 +95,37 @@ def setting_icon(dbindex, naslov) -> str:
     return _DEFAULT_ICON
 
 
+@dataclass
+class SettingStoredData(ExtraStoredData):
+    """The last value and bounds a setting was seen with, kept across restarts."""
+
+    value: float | None
+    minimum: float | None
+    maximum: float | None
+    default: float | None
+    timestamp: int | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SettingStoredData:
+        def number(key: str) -> float | None:
+            value = data.get(key)
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                return None
+            return float(value)
+
+        timestamp = data.get("timestamp")
+        return cls(
+            value=number("value"),
+            minimum=number("minimum"),
+            maximum=number("maximum"),
+            default=number("default"),
+            timestamp=timestamp if isinstance(timestamp, int) and not isinstance(timestamp, bool) else None,
+        )
+
+
 async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entities):
     entities: list[NumberEntity] = []
     client = config_entry.runtime_data.client
@@ -101,7 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry, async_add_entitie
         async_add_entities(entities, True)
 
 
-class WebBoilerSettingNumber(NumberEntity):
+class WebBoilerSettingNumber(NumberEntity, RestoreEntity):
     """One editable controller setting."""
 
     _attr_mode = NumberMode.BOX
@@ -130,12 +167,15 @@ class WebBoilerSettingNumber(NumberEntity):
         # Slot parameters this entity listens to. One the portal did not report
         # at setup is added when it first arrives.
         self._hooked: set[str] = set()
+        # What the previous run last saw, used only while the portal has not
+        # reported the slot in this one.
+        self._restored: SettingStoredData | None = None
 
     def _parameter(self, role: str):
         """Read a slot parameter without creating a placeholder for it."""
         return self._device.get("parameters", {}).get(self._param_names[role])
 
-    def _number(self, role: str) -> float | None:
+    def _live_number(self, role: str) -> float | None:
         parameter = self._parameter(role)
         if parameter is None:
             return None
@@ -144,6 +184,25 @@ class WebBoilerSettingNumber(NumberEntity):
         except (TypeError, ValueError):
             # "?" -- the placeholder a slot carries before it is ever reported.
             return None
+
+    def _number(self, role: str) -> float | None:
+        live = self._live_number(role)
+        if live is not None or self._restored is None:
+            return live
+        return getattr(self._restored, role)
+
+    @property
+    def _is_restored(self) -> bool:
+        return self._live_number("value") is None and self._restored is not None
+
+    def _timestamp(self) -> int | None:
+        parameter = self._parameter("value")
+        if parameter is not None and parameter.get("timestamp") is not None:
+            try:
+                return int(parameter["timestamp"])
+            except (TypeError, ValueError):
+                return None
+        return self._restored.timestamp if self._is_restored else None
 
     def _hook_slot_parameters(self) -> bool:
         """Listen to every slot parameter the device has; True if any was new."""
@@ -157,6 +216,12 @@ class WebBoilerSettingNumber(NumberEntity):
         return added
 
     async def async_added_to_hass(self) -> None:
+        last = await self.async_get_last_extra_data()
+        if last is not None:
+            restored = SettingStoredData.from_dict(last.as_dict())
+            # Only a setting that was writable when saved: a value with bounds.
+            if restored.value is not None and restored.minimum is not None and restored.maximum is not None:
+                self._restored = restored
         self._hook_slot_parameters()
         # A parameter created after setup has no listener of its own yet, so the
         # first value of a late slot is only seen here, through the collection.
@@ -233,13 +298,29 @@ class WebBoilerSettingNumber(NumberEntity):
         default = self._number("default")
         if default is not None:
             attrs["Default"] = default
-        parameter = self._parameter("value")
-        if parameter is not None and parameter.get("timestamp") is not None:
+        timestamp = self._timestamp()
+        if timestamp is not None:
             try:
-                attrs["Last updated"] = format_time(self.hass, int(parameter["timestamp"]))
+                attrs["Last updated"] = format_time(self.hass, timestamp)
             except Exception:
                 pass
+        if self._is_restored:
+            # The portal has not reported this setting since Home Assistant
+            # started; the value is the last one seen before the restart.
+            attrs["Restored"] = True
         return attrs
+
+    @property
+    def extra_restore_state_data(self) -> SettingStoredData:
+        # What is shown, restored values included, so that a second restart
+        # before the portal reports the slot does not lose them.
+        return SettingStoredData(
+            value=self._number("value"),
+            minimum=self._number("minimum"),
+            maximum=self._number("maximum"),
+            default=self._number("default"),
+            timestamp=self._timestamp(),
+        )
 
     async def async_set_native_value(self, value: float) -> None:
         minimum = self._number("minimum")
